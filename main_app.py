@@ -3,38 +3,37 @@
 import csv
 from functools import partial
 from groq import Groq
-import glob
 from io import BytesIO
 import json
 from operator import is_not
+import glob
 import pandas as pd
 import re
-import time
 import tkinter as tk
 from tkinter import filedialog
 import requests
 import streamlit as st
-import sys
+# import sys
 #WhisperX import
 # import whisperx
-import gc 
+# import gc 
 import torch
 import os
 from datetime import datetime
 #LLM import
-from langchain.embeddings import LlamaCppEmbeddings
-from langchain_community.llms import LlamaCpp
-from langchain_core.prompts import PromptTemplate
-from langchain.callbacks.manager import CallbackManager
-from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
+# from langchain.embeddings import LlamaCppEmbeddings
+# from langchain_community.llms import LlamaCpp
+# from langchain_core.prompts import PromptTemplate
+# from langchain.callbacks.manager import CallbackManager
+# from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 from nltk.tokenize import word_tokenize
 from nltk.tag import pos_tag
 from nltk.chunk import ne_chunk
 from nltk.tree import Tree
-from openpyxl import Workbook
-from openpyxl.styles import PatternFill
-from streamlit.components.v1 import html
-import openai
+# from openpyxl import Workbook
+# from openpyxl.styles import PatternFill
+# from streamlit.components.v1 import html
+# import openai
 from openai import OpenAI
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, ID3NoHeaderError
@@ -42,8 +41,8 @@ from pydub import AudioSegment
 import zipfile
 import io
 # import assemblyai as aai
-import httpx
-import threading
+# import httpx
+# import threading
 # from deepgram import (
 # DeepgramClient,
 # PrerecordedOptions,
@@ -105,7 +104,7 @@ def speech_to_text_groq(audio_file):
     # Groq_model="llama3-8b-8192"
     # Groq_model="llama3-70b-8192"
     # Groq_model="mixtral-8x7b-32768"
-    Groq_model="gemma2-9b-it"
+    # Groq_model="gemma2-9b-it"
 
     # Transcribe the audio
     audio_model="whisper-large-v3-turbo"
@@ -623,7 +622,9 @@ def groq_LLM_audit(dialog):
         output_dict["Overall Result"] = overall_result
 
     # print(output_dict)
-    import gc; gc.collect(); torch.cuda.empty_cache();
+    import gc
+    gc.collect()
+    torch.cuda.empty_cache()
 
     return output_dict
         
@@ -771,7 +772,7 @@ def LLM_audit(dialog):
                 person_entities.append(person_name)
         return person_entities
 
-    person_names = []
+    # person_names = []
 
 
     stage_1_result = format_json_with_line_break(stage_1_result)
@@ -839,7 +840,9 @@ def LLM_audit(dialog):
         output_dict["Overall Result"] = overall_result
 
     print(output_dict)
-    import gc; gc.collect(); torch.cuda.empty_cache();
+    import gc
+    gc.collect()
+    torch.cuda.empty_cache()
 
     return output_dict
 
@@ -907,7 +910,7 @@ def handle_download_log_file(data, file_name, mime, log_message):
 @st.fragment
 def handle_download_text(count, data, file_name, mime, log_message):
     st.download_button(
-        label=f"Download Transcript", 
+        label="Download Transcript", 
         data=data,
         file_name=file_name,
         mime=mime,
@@ -1234,8 +1237,7 @@ def main():
 
 
                 except Exception as e:
-                    # st.warning(f"Error processing file '{file_name}': {e}")
-                    st.warning(f"Error processing file {file_name} is not an MP3 or WAV file.")
+                    st.warning(f"Error processing file '{file_name}': {e}")
             
             #Filter files that are not in MP3 or WAV extensions
             audio_files = list(filter(partial(is_not, None), audio_files))
@@ -1294,8 +1296,9 @@ def main():
                                 else:
                                     status = "<span style='color: green;'> (PASS)</span>"
                 except Exception as e:
-                    create_log_entry(f"Error processing file: {audio_file} - {e}")
-                    st.error(f"Error processing file: {audio_file} - {e}")
+                    error_message = f"Error processing file: {audio_file} - {e}"
+                    create_log_entry(error_message)
+                    st.error(error_message)
                     continue
                 col1, col2 = st.columns([0.9,0.1])
                 with col1:
