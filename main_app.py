@@ -40,6 +40,8 @@ from mutagen.id3 import ID3, ID3NoHeaderError
 from pydub import AudioSegment
 import zipfile
 import io
+from pydub.playback import play
+
 # import assemblyai as aai
 # import httpx
 # import threading
@@ -1147,6 +1149,14 @@ def main():
                 for file_name in added_files:
                     create_log_entry(f"Action: File Uploaded - {file_name}")
                     file = current_files[file_name]
+                    st.session_state.uploaded_files[file_name] = current_files[file_name]
+
+                    st.subheader("Uploaded Audio Files")
+                    for file_name, file_obj in st.session_state.uploaded_files.items():
+                        with st.expander(f"Audio: {file_name}"):
+                            st.audio(file_obj, format="audio/mp3", start_time=0)
+
+
 
                     try:
                         audio_content = file.read()
