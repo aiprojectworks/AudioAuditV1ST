@@ -3,3 +3,5 @@ logfile.csv
 logfile.txt
 users.db
 __pychache__/
+.devcontainer/
+.vscode/
