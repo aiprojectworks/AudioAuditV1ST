@@ -1151,8 +1151,7 @@ def main():
                     file = current_files[file_name]
                     st.session_state.uploaded_files[file_name] = current_files[file_name]
 
-                    st.subheader("Uploaded Audio Files")
-                    
+                st.subheader("Uploaded Audio Files")
                 for file_name, file_obj in st.session_state.uploaded_files.items():
                     with st.expander(f"Audio: {file_name}"):
                         st.audio(file_obj, format="audio/mp3", start_time=0)
