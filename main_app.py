@@ -231,9 +231,6 @@ def speech_to_text(audio_file):
     # print(dialog)
     
 
-
-
-
     # gladia_key = "fb8ac339-e239-4253-926a-c963e2a1162b"
     # gladia_url = "https://api.gladia.io/audio/text/audio-transcription/"
 
@@ -271,10 +268,6 @@ def speech_to_text(audio_file):
     #         print(f'Request failed with status code {response.status_code}')
     #         return response.json()
     
-
-
-
-
 
     # # Define the API URL
     # url = "https://api.gladia.io/v2/upload"
@@ -401,11 +394,6 @@ def speech_to_text(audio_file):
     #     return response.json()
 
 
-
-
-
-
-
     # try:
     #     with open(audio_file, "rb") as file:
     #         buffer_data = file.read()
@@ -478,7 +466,7 @@ def speech_to_text(audio_file):
     #     if speaker:  # Ensure speaker is not null
     #         dialog = re.sub(r'\b' + re.escape(speaker) + r'\b', role.capitalize(), dialog, flags=re.I)
 
-    print(dialog)
+    # print(dialog)
 
     return dialog, language_code
 
@@ -1118,8 +1106,9 @@ def main():
             # After successful login, show the main dashboard
             st.sidebar.success(f"Logged in as: {st.session_state['username']}")
             if st.sidebar.button("Logout"):
-                st.session_state["logged_in"] = False
-                st.session_state["username"] = None
+                st.session_state.clear()
+                # st.session_state["logged_in"] = False
+                # st.session_state["username"] = None
                 st.rerun()
                 # st.experimental_rerun()  # Refresh the app after logout
 
@@ -1239,6 +1228,8 @@ def main():
                                 st.error(f"Error deleting file {file_name}: {e}")
                                 create_log_entry(f"Error deleting file {file_name}: {e}")                    
 
+                    if "username" in st.session_state and st.session_state["username"]:
+                        username = st.session_state["username"]
 
                     for file_name in added_files:
                         create_log_entry(f"Action: File Uploaded - {file_name}")
