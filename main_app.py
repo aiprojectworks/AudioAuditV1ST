@@ -1151,13 +1151,6 @@ def main():
                     file = current_files[file_name]
                     st.session_state.uploaded_files[file_name] = current_files[file_name]
 
-                st.subheader("Uploaded Audio Files")
-                for file_name, file_obj in st.session_state.uploaded_files.items():
-                    with st.expander(f"Audio: {file_name}"):
-                        st.audio(file_obj, format="audio/mp3", start_time=0)
-
-
-
                     try:
                         audio_content = file.read()
                         saved_path = save_audio_file(audio_content, file_name)
@@ -1165,11 +1158,16 @@ def main():
                             st.session_state.audio_files.append(saved_path)
                             st.session_state.file_change_detected = True
                         else:
-                            # st.error(f"{saved_path[2:]} is an Invalid MP3 or WAV File")
+                            st.error(f"{saved_path[2:]} is an Invalid MP3 or WAV File")
                             create_log_entry(f"Error: {saved_path[2:]} is an Invalid MP3 or WAV File")
                     except Exception as e:
                         st.error(f"Error loading audio file: {e}")
-                        # create_log_entry(f"Error loading audio file: {e}")
+                        create_log_entry(f"Error loading audio file: {e}")  
+
+                st.subheader("Uploaded Audio Files")
+                for file_name, file_obj in st.session_state.uploaded_files.items():
+                    with st.expander(f"Audio: {file_name}"):
+                        st.audio(file_obj, format="audio/mp3", start_time=0)
 
                 # Determine files that have been removed
                 removed_files = [file_name for file_name in st.session_state.uploaded_files if file_name not in current_files]
