@@ -5,3 +5,5 @@ users.db
 __pychache__/
 .devcontainer/
 .vscode/
+admin/
+__pycache__/database.cpython-310.pyc

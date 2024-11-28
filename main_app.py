@@ -96,8 +96,15 @@ def login_page():
 def save_audio_file(audio_bytes, name):
     try:
         if name.lower().endswith(".wav") or name.lower().endswith(".mp3"):
+            username = st.session_state["username"]
+
+            user_folder = os.path.join(".", username)
+            os.makedirs(user_folder, exist_ok=True)
+
             name = os.path.basename(name)
-            file_name = "./" + f"audio_{name}"
+            file_name = os.path.join(user_folder, f"audio_{name}")
+
+
             with open(file_name, "wb") as f:
                 f.write(audio_bytes)
             print(f"File saved successfully: {file_name}")
@@ -1106,6 +1113,11 @@ def main():
             # After successful login, show the main dashboard
             st.sidebar.success(f"Logged in as: {st.session_state['username']}")
             if st.sidebar.button("Logout"):
+                username = st.session_state["username"]
+                directory = username
+                delete_mp3_files(directory)
+                directory = "./" + directory
+                os.rmdir(directory)
                 st.session_state.clear()
                 # st.session_state["logged_in"] = False
                 # st.session_state["username"] = None
@@ -1213,9 +1225,11 @@ def main():
                         st.session_state.audio_files = [f for f in st.session_state.audio_files if not f.endswith(file_name)]
                         st.session_state.file_change_detected = True
 
+                        username = st.session_state["username"]
+
                         # Delete the corresponding file from the directory
                         audio_file_name = "audio_" + file_name
-                        full_path = os.path.join(".\\", audio_file_name)  # Root directory or adjust to your save directory
+                        full_path = os.path.join(username, audio_file_name)  # Root directory or adjust to your save directory
                         if os.path.exists(full_path):
                             try:
                                 # print(full_path)
@@ -1228,8 +1242,7 @@ def main():
                                 st.error(f"Error deleting file {file_name}: {e}")
                                 create_log_entry(f"Error deleting file {file_name}: {e}")                    
 
-                    if "username" in st.session_state and st.session_state["username"]:
-                        username = st.session_state["username"]
+
 
                     for file_name in added_files:
                         create_log_entry(f"Action: File Uploaded - {file_name}")
@@ -1295,9 +1308,10 @@ def main():
                     if selected_folder_path:
                         remove_folder_button = st.button("Remove Uploaded Folder")
                         if remove_folder_button:
+                            username = st.session_state["username"]
                             st.session_state.folder_path = None
                             selected_folder_path = None
-                            directory = "./"
+                            directory = username
                             delete_mp3_files(directory)
                             create_log_entry("Action: Uploaded Folder Removed")
                             success_message = "Uploaded folder has been removed."
@@ -1516,7 +1530,8 @@ def main():
                                     )
                         
                     combined_audit_result_download(data=zip_buffer, file_name='CombinedAuditResults.zip', mime="application/zip", log_message="Action: Audited Results Zip File Downloaded")  
-                    directory = "./"
+                    username = st.session_state["username"]
+                    directory = username
                     delete_mp3_files(directory)
                 # else:
                 #     st.error("Please specify a destination folder to save audited transcript!")
