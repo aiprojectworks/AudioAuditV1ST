@@ -1462,7 +1462,7 @@ def main():
                 file_contents = file.read()
                 handle_download_log_file(data=file_contents, file_name='log.csv', mime='text/csv', log_message="Action: Event Log Downloaded")
     except Exception as e:
-        st.error(f"An error occurred: {e}")
+        # st.error(f"An error occurred: {e}")
         create_log_entry(f"Error: {e}")
 
 if __name__ == "__main__":
