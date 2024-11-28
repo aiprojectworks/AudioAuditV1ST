@@ -1,3 +1,5 @@
 .streamlit/secrets.toml
 logfile.csv
 logfile.txt
+users.db
+__pychache__/
