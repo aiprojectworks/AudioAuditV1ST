@@ -1165,7 +1165,7 @@ def main():
 
                 #* deletes the files that are not in the current_files
                 for file_name in files_to_remove:
-                    create_log_entry(f"Action: File Removed - {file_name}")
+                    # create_log_entry(f"Action: File Removed - {file_name}")
 
                     # Update `st.session_state.audio_files` to exclude the removed file
                     st.session_state.audio_files = [f for f in st.session_state.audio_files if not f.endswith(file_name)]
@@ -1177,7 +1177,8 @@ def main():
                     if os.path.exists(full_path):
                         try:
                             # print(full_path)
-                            os.remove(full_path)  # Delete the file
+                            os.remove(full_path)  # Delete the file 
+                              
                             create_log_entry(f"Action: File Deleted - {full_path}")
                             del st.session_state.uploaded_files[file_name]
 
