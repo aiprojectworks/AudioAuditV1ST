@@ -41,6 +41,14 @@ from pydub import AudioSegment
 import zipfile
 import io
 from database import Session, User
+# from streamlit_cookies_manager import EncryptedCookieManager
+from streamlit_cookies_controller import CookieController
+# from streamlit.web.server.websocket_headers import _get_websocket_headers 
+# from urllib.parse import unquote
+# import extra_streamlit_components as stx
+
+
+
 # from pydub.playback import play
 
 # import assemblyai as aai
@@ -54,10 +62,15 @@ from database import Session, User
 # LiveTranscriptionEvents,
 # LiveOptions,
 # )
-
+st.set_page_config(page_title="IPPFA Trancribe & Audit",
+                            page_icon=":books:")
 groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 # deepgram = DeepgramClient(st.secrets["DEEPGRAM_API_KEY"])
 client = OpenAI(api_key=st.secrets["API_KEY"])
+
+
+controller = CookieController()
+
 
 # Authenticate function
 def authenticate(username, password):
@@ -87,6 +100,8 @@ def login_page():
     if login_button:
         user = authenticate(username, password)  # Call authentication function
         if user:
+            # cookie_manager.set("username", user.username, expires_at=datetime.now() + timedelta(days=1))
+            controller.set("username", user.username)
             st.session_state["logged_in"] = True
             st.session_state["username"] = user.username
             st.rerun()  # Refresh app state
@@ -1096,15 +1111,17 @@ def is_valid_mp3(file_path):
     
 
 def main():
+    all_cookies = controller.getAll()
+    if all_cookies:
+        print("cookies", all_cookies)
     try:
-        st.set_page_config(page_title="IPPFA Trancribe & Audit",
-                            page_icon=":books:")
-
-
-        if "logged_in" not in st.session_state:
+        cookies = controller.get("username")
+        if cookies:
+            st.session_state["logged_in"] = True
+            st.session_state["username"] = cookies
+        elif "logged_in" not in st.session_state:
             st.session_state["logged_in"] = False
             st.session_state["username"] = None
-        # st.write(f"Logged in state: {st.session_state['logged_in']}")
 
         if not st.session_state["username"]:
             # Show the login page if not logged in
@@ -1113,12 +1130,17 @@ def main():
             # After successful login, show the main dashboard
             st.sidebar.success(f"Logged in as: {st.session_state['username']}")
             if st.sidebar.button("Logout"):
-                username = st.session_state["username"]
-                directory = username
-                delete_mp3_files(directory)
-                directory = "./" + directory
-                os.rmdir(directory)
-                st.session_state.clear()
+                # st.write(cookie_manager.get_all())
+                username = st.session_state.get("username", None)
+                if username:
+                    controller.remove("username")
+                    username = st.session_state["username"]
+                    directory = username
+                    if os.path.exists(directory):
+                        delete_mp3_files(directory)
+                        directory = "./" + directory
+                        os.rmdir(directory)
+                    st.session_state.clear()
                 # st.session_state["logged_in"] = False
                 # st.session_state["username"] = None
                 st.rerun()
@@ -1563,7 +1585,9 @@ def main():
     except Exception as e:
         # st.error(f"An error occurred: {e}")
         create_log_entry(f"Error: {e}")
+        print(f"An error occurred: {e}")
 
 if __name__ == "__main__":
     print(torch.cuda.is_available())  # Should return True if CUDA is set up
+
     main()
