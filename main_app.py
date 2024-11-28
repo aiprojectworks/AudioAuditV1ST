@@ -40,7 +40,7 @@ from mutagen.id3 import ID3, ID3NoHeaderError
 from pydub import AudioSegment
 import zipfile
 import io
-from pydub.playback import play
+# from pydub.playback import play
 
 # import assemblyai as aai
 # import httpx
@@ -1141,11 +1141,51 @@ def main():
             #         unique_filenames.add(file.name)
 
             if uploaded_files is not None:
-                # Track current files
+                #!removing this because its broken
+                # # Track current files
+                # current_files = {file.name: file for file in uploaded_files}
+
+                # # Determine files that have been added
+                # added_files = [file_name for file_name in current_files if file_name not in st.session_state.uploaded_files]
+                # files_to_remove = [
+                #     file_name for file_name in st.session_state.uploaded_files 
+                #     if file_name not in added_files
+                # ]
+                # Track current files from the file uploader
                 current_files = {file.name: file for file in uploaded_files}
 
-                # Determine files that have been added
+                # Determine files that have been added (newly uploaded files)
                 added_files = [file_name for file_name in current_files if file_name not in st.session_state.uploaded_files]
+
+                # Determine files that have been removed (no longer in the uploader)
+                files_to_remove = [
+                    file_name for file_name in st.session_state.uploaded_files 
+                    if file_name not in current_files
+                ]
+
+                #* deletes the files that are not in the current_files
+                for file_name in files_to_remove:
+                    create_log_entry(f"Action: File Removed - {file_name}")
+
+                    # Update `st.session_state.audio_files` to exclude the removed file
+                    st.session_state.audio_files = [f for f in st.session_state.audio_files if not f.endswith(file_name)]
+                    st.session_state.file_change_detected = True
+
+                    # Delete the corresponding file from the directory
+                    audio_file_name = "audio_" + file_name
+                    full_path = os.path.join(".\\", audio_file_name)  # Root directory or adjust to your save directory
+                    if os.path.exists(full_path):
+                        try:
+                            # print(full_path)
+                            os.remove(full_path)  # Delete the file
+                            create_log_entry(f"Action: File Deleted - {full_path}")
+                            del st.session_state.uploaded_files[file_name]
+
+                        except Exception as e:
+                            st.error(f"Error deleting file {file_name}: {e}")
+                            create_log_entry(f"Error deleting file {file_name}: {e}")                    
+
+
                 for file_name in added_files:
                     create_log_entry(f"Action: File Uploaded - {file_name}")
                     file = current_files[file_name]
@@ -1164,17 +1204,18 @@ def main():
                         st.error(f"Error loading audio file: {e}")
                         create_log_entry(f"Error loading audio file: {e}")  
 
-                st.subheader("Uploaded Audio Files")
-                for file_name, file_obj in st.session_state.uploaded_files.items():
-                    with st.expander(f"Audio: {file_name}"):
-                        st.audio(file_obj, format="audio/mp3", start_time=0)
+                if st.session_state.uploaded_files:
+                    st.subheader("Uploaded Audio Files")
+                    for file_name, file_obj in st.session_state.uploaded_files.items():
+                        with st.expander(f"Audio: {file_name}"):
+                            st.audio(file_obj, format="audio/mp3", start_time=0)
 
                 # Determine files that have been removed
-                removed_files = [file_name for file_name in st.session_state.uploaded_files if file_name not in current_files]
-                for file_name in removed_files:
-                    create_log_entry(f"Action: File Removed - {file_name}")
-                    st.session_state.audio_files = [f for f in st.session_state.audio_files if not f.endswith(file_name)]
-                    st.session_state.file_change_detected = True
+                # removed_files = [file_name for file_name in st.session_state.uploaded_files if file_name not in current_files]
+                # for file_name in removed_files:
+                #     create_log_entry(f"Action: File Removed - {file_name}")
+                #     st.session_state.audio_files = [f for f in st.session_state.audio_files if not f.endswith(file_name)]
+                #     st.session_state.file_change_detected = True
 
                 # Update session state with the current file list if a change was detected
                 if st.session_state.file_change_detected:
