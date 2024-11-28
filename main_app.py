@@ -19,7 +19,7 @@ import streamlit as st
 # import gc 
 import torch
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 #LLM import
 # from langchain.embeddings import LlamaCppEmbeddings
 # from langchain_community.llms import LlamaCpp
@@ -40,7 +40,7 @@ from mutagen.id3 import ID3, ID3NoHeaderError
 from pydub import AudioSegment
 import zipfile
 import io
-from database import Session, User
+from database import Session, User, seed_users
 # from streamlit_cookies_manager import EncryptedCookieManager
 from streamlit_cookies_controller import CookieController
 # from streamlit.web.server.websocket_headers import _get_websocket_headers 
@@ -1134,6 +1134,9 @@ def main():
                 username = st.session_state.get("username", None)
                 if username:
                     controller.remove("username")
+                    all_cookies = controller.getAll()
+                    for cookie in list(all_cookies.keys()):
+                        controller.remove(cookie)  # Delete each cookie
                     username = st.session_state["username"]
                     directory = username
                     if os.path.exists(directory):
@@ -1588,6 +1591,7 @@ def main():
         print(f"An error occurred: {e}")
 
 if __name__ == "__main__":
+    seed_users()
     print(torch.cuda.is_available())  # Should return True if CUDA is set up
 
     main()
