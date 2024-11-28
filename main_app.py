@@ -1165,7 +1165,7 @@ def main():
                             st.session_state.audio_files.append(saved_path)
                             st.session_state.file_change_detected = True
                         else:
-                            st.error(f"{saved_path[2:]} is an Invalid MP3 or WAV File")
+                            # st.error(f"{saved_path[2:]} is an Invalid MP3 or WAV File")
                             create_log_entry(f"Error: {saved_path[2:]} is an Invalid MP3 or WAV File")
                     except Exception as e:
                         st.error(f"Error loading audio file: {e}")
