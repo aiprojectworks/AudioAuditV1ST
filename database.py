@@ -9,6 +9,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String, unique=True, nullable=False)
     password = Column(String, nullable=False)
+    role = Column(String, nullable=False, default='user')
 
 
 engine = create_engine('sqlite:///users.db')  # SQLite database
@@ -20,8 +21,8 @@ def seed_users():
     # Check if users already exist
     if session.query(User).count() == 0:
         users = [
-            User(username="admin", password="admin123"),
-            User(username="user1", password="password1"),
+            User(username="admin", password="admin123", role="admin"),
+            User(username="user1", password="password1", role="user"),
         ]
         session.add_all(users)
         session.commit()

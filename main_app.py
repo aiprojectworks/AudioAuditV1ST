@@ -48,8 +48,11 @@ from database import Session, User, seed_users
 # import extra_streamlit_components as stx
 # from streamlit.web.server.websocket_headers import _get_websocket_headers
 import threading
+from sqlalchemy.exc import IntegrityError
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 from streamlit.runtime import get_instance
+from typing import Optional, Tuple
+
 
 
 
@@ -73,8 +76,176 @@ groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 # deepgram = DeepgramClient(st.secrets["DEEPGRAM_API_KEY"])
 client = OpenAI(api_key=st.secrets["API_KEY"])
 
+def is_admin(username: str) -> bool:
+    """Check if user has admin role"""
+    try:
+        session = Session()
+        user = session.query(User).filter_by(username=username).first()
+        return user is not None and user.role == "admin"
+    except Exception as e:
+        print(f"Database error checking admin status: {e}")
+        return False
+    finally:
+        session.close()
 
-# controller = CookieController()
+def add_user(username: str, password: str, role: str = "user") -> Tuple[bool, str]:
+    """Add a new user to the database"""
+    try:
+        session = Session()
+        new_user = User(username=username, password=password, role=role)
+        session.add(new_user)
+        session.commit()
+        return True, "User added successfully"
+    except IntegrityError:
+        session.rollback()
+        return False, "Username already exists"
+    except Exception as e:
+        session.rollback()
+        return False, f"Error adding user: {e}"
+    finally:
+        session.close()
+
+def delete_user(username: str) -> Tuple[bool, str]:
+    """Delete a user from the database"""
+    try:
+        session = Session()
+        user = session.query(User).filter_by(username=username).first()
+        if user:
+            if user.role == "admin":
+                # Count number of admin users
+                admin_count = session.query(User).filter_by(role="admin").count()
+                if admin_count <= 1:
+                    return False, "Cannot delete the last admin user"
+            session.delete(user)
+            session.commit()
+            return True, "User deleted successfully"
+        return False, "User not found"
+    except Exception as e:
+        session.rollback()
+        return False, f"Error deleting user: {e}"
+    finally:
+        session.close()
+
+def get_all_users() -> list:
+    """Get all users from the database"""
+    try:
+        session = Session()
+        users = session.query(User).all()
+        return [{"username": user.username, "role": user.role} for user in users]
+    except Exception as e:
+        print(f"Error fetching users: {e}")
+        return []
+    finally:
+        session.close()
+
+
+def change_password(username: str, new_password: str) -> Tuple[bool, str]:
+    """Change a user's password"""
+    try:
+        session = Session()
+        user = session.query(User).filter_by(username=username).first()
+        if user:
+            user.password = new_password
+            session.commit()
+            return True, "Password changed successfully"
+        return False, "User not found"
+    except Exception as e:
+        session.rollback()
+        return False, f"Error changing password: {e}"
+    finally:
+        session.close()
+
+def change_role(username: str, new_role: str) -> Tuple[bool, str]:
+    """Change a user's role"""
+    try:
+        session = Session()
+        user = session.query(User).filter_by(username=username).first()
+        if user:
+            # Prevent removing the last admin
+            if user.role == "admin" and new_role != "admin":
+                admin_count = session.query(User).filter_by(role="admin").count()
+                if admin_count <= 1:
+                    return False, "Cannot remove the last admin user"
+            user.role = new_role
+            session.commit()
+            return True, "Role changed successfully"
+        return False, "User not found"
+    except Exception as e:
+        session.rollback()
+        return False, f"Error changing role: {e}"
+    finally:
+        session.close()
+
+def admin_interface():
+    """Render the admin interface in Streamlit"""
+    st.title("Admin Panel")
+    
+    # Add New User Section
+    st.subheader("Add New User")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        new_username = st.text_input("Username", key="new_username")
+    with col2:
+        new_password = st.text_input("Password", type="password", key="new_password")
+    with col3:
+        new_role = st.selectbox("Role", ["user", "admin"], key="new_role")
+    
+    if st.button("Add User"):
+        if new_username and new_password:
+            success, message = add_user(new_username, new_password, new_role)
+            if success:
+                st.success(message)
+                create_log_entry(f"Admin Action: Added new user - {new_username}")
+            else:
+                st.error(message)
+                create_log_entry(f"Admin Action Failed: Add user - {new_username} - {message}")
+        else:
+            st.warning("Please fill in all fields")
+
+    # Manage Existing Users Section
+    st.subheader("Manage Users")
+    users = get_all_users()
+    
+    if users:
+        for user in users:
+            with st.expander(f"User: {user['username']} ({user['role']})"):
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    new_pass = st.text_input("New Password", type="password", key=f"pass_{user['username']}")
+                    if st.button("Change Password", key=f"btn_pass_{user['username']}"):
+                        if new_pass:
+                            success, message = change_password(user['username'], new_pass)
+                            if success:
+                                st.success(message)
+                                create_log_entry(f"Admin Action: Changed password for user - {user['username']}")
+                            else:
+                                st.error(message)
+                
+                with col2:
+                    new_role = st.selectbox("New Role", ["user", "admin"], 
+                                          index=0 if user['role']=="user" else 1,
+                                          key=f"role_{user['username']}")
+                    if st.button("Change Role", key=f"btn_role_{user['username']}"):
+                        success, message = change_role(user['username'], new_role)
+                        if success:
+                            st.success(message)
+                            create_log_entry(f"Admin Action: Changed role for user - {user['username']} to {new_role}")
+                        else:
+                            st.error(message)
+                
+                with col3:
+                    if st.button("Delete User", key=f"btn_del_{user['username']}"):
+                        success, message = delete_user(user['username'])
+                        if success:
+                            st.success(message)
+                            create_log_entry(f"Admin Action: Deleted user - {user['username']}")
+                            st.rerun()
+                        else:
+                            st.error(message)
+    else:
+        st.info("No users found")
+
 
 def cleanup_on_logout(username = st.session_state.get("username")):
     """Handle cleanup when user logs out"""
@@ -86,13 +257,7 @@ def cleanup_on_logout(username = st.session_state.get("username")):
             delete_mp3_files(directory)
             directory = "./" + directory
             os.rmdir(directory)
-    
-    # Clear cookies
-    # all_cookies = controller.getAll()
-    # if all_cookies:
-    #     cookie_keys = list(all_cookies.keys())
-    #     for cookie in cookie_keys:
-    #         controller.remove(cookie)
+
 
     st.session_state.clear()   
 
@@ -138,11 +303,6 @@ def login_page():
     """Display login form and authenticate users."""
     st.title("Login Portal")
     
-    # all_cookies = controller.getAll()
-    # if (all_cookies):
-    #     for cookie in list(all_cookies):
-    #         controller.remove(cookie)
-
 
     # Group inputs and button in a form for "Enter" support
     with st.form("login_form"):
@@ -1184,40 +1344,60 @@ def main():
 
             # After successful login, show the main dashboard
             st.sidebar.success(f"Logged in as: {st.session_state['username']}")
+
             if st.sidebar.button("Logout"):
                 cleanup_on_logout()
                 st.rerun()
-            with st.sidebar:
-                st.title("AI Model Selection")
-                transcribe_option = st.radio(
-                    "Choose your transcription AI model:",
-                    ("OpenAI (Recommended)", "Groq")
-                )
-                audit_option = st.radio(
-                    "Choose your Audit AI model:",
-                    ("OpenAI (Recommended)", "Groq")
-                )
-                st.write(f"Transcription Model:\n\n{transcribe_option.replace('(Recommended)','')}\n\nAudit Model:\n\n{audit_option.replace('(Recommended)','')}")
-                st.markdown('<p style="color:red;">Groq AI Models are not recommended for file sizes of more than 1MB. Model will start to hallucinate.</p>', unsafe_allow_html=True)
 
-            st.title("AI Transcription & Audit Service")
-            st.info("Upload an audio file or select a folder to convert audio to text.", icon=":material/info:")
+            if is_admin(st.session_state["username"]):
+                button_text = "Back to Transcription Service" if st.session_state.get('show_admin', False) else "Open Admin Panel"
+                if st.sidebar.button(button_text, key="admin_toggle_button"):
+                    st.session_state.show_admin = not st.session_state.get('show_admin', False)
+                    st.rerun()
 
-            audio_files = []
-            status = ""
 
-            # Initialize session state to track files and change detection
-            if 'uploaded_files' not in st.session_state:
-                st.session_state.uploaded_files = {}
-            if 'file_change_detected' not in st.session_state:
-                st.session_state.file_change_detected = False
-            if 'audio_files' not in st.session_state:
-                st.session_state.audio_files = []
 
-            save_to_path = st.session_state.get("save_to_path", None)
+            if st.session_state.get('show_admin', False):
+                admin_interface()
+                # if st.button("Back to Transcription Service"):
+                #     st.session_state.show_admin = False
+                #     st.rerun()
+            else:
+                with st.sidebar:
+                    st.title("AI Model Selection")
+                    transcribe_option = st.radio(
+                        "Choose your transcription AI model:",
+                        ("OpenAI (Recommended)", "Groq")
+                    )
+                    audit_option = st.radio(
+                        "Choose your Audit AI model:",
+                        ("OpenAI (Recommended)", "Groq")
+                    )
+                    st.write(f"Transcription Model:\n\n{transcribe_option.replace('(Recommended)','')}\n\nAudit Model:\n\n{audit_option.replace('(Recommended)','')}")
+                    st.markdown('<p style="color:red;">Groq AI Models are not recommended for file sizes of more than 1MB. Model will start to hallucinate.</p>', unsafe_allow_html=True)
+
+                st.title("AI Transcription & Audit Service")
+                st.info("Upload an audio file or select a folder to convert audio to text.", icon=":material/info:")
+                
+                method = st.radio("Select Upload Method:", options=["Upload Files / Folder"], horizontal=True, key='upload_method', on_change=log_selection)
+
+
+            
+
+                audio_files = []
+                status = ""
+
+                # Initialize session state to track files and change detection
+                if 'uploaded_files' not in st.session_state:
+                    st.session_state.uploaded_files = {}
+                if 'file_change_detected' not in st.session_state:
+                    st.session_state.file_change_detected = False
+                if 'audio_files' not in st.session_state:
+                    st.session_state.audio_files = []
+
+                save_to_path = st.session_state.get("save_to_path", None)
 
             # Choose upload method
-            method = st.radio("Select Upload Method:", options=["Upload Files / Folder"], horizontal=True, key='upload_method', on_change=log_selection)
 
             # with st.expander("Other Options"):
             #     save_audited_transcript = st.checkbox("Save Audited Results to Folder (CSV)")
@@ -1238,391 +1418,391 @@ def main():
             #     else:
             #         save_to_display.write(f"Save To Folder: {save_to_path}")
 
-            if method == "Upload Files / Folder":
-                # File uploader
-                uploaded_files = st.file_uploader(
-                    label="Choose audio files", 
-                    label_visibility="collapsed", 
-                    type=["wav", "mp3"], 
-                    accept_multiple_files=True
-                )
-                # # Create a set to track unique filenames
-                # unique_filenames = set()
+                if method == "Upload Files / Folder":
+                    # File uploader
+                    uploaded_files = st.file_uploader(
+                        label="Choose audio files", 
+                        label_visibility="collapsed", 
+                        type=["wav", "mp3"], 
+                        accept_multiple_files=True
+                    )
+                    # # Create a set to track unique filenames
+                    # unique_filenames = set()
 
-                # # Check for duplicates and collect unique filenames
-                # for file in uploaded_files:
-                #     if file.name in unique_filenames:
-                #         del st.session_state['uploaded_files']
-                #         st.warning("File has already been added!")
-                #     else:
-                #         unique_filenames.add(file.name)
+                    # # Check for duplicates and collect unique filenames
+                    # for file in uploaded_files:
+                    #     if file.name in unique_filenames:
+                    #         del st.session_state['uploaded_files']
+                    #         st.warning("File has already been added!")
+                    #     else:
+                    #         unique_filenames.add(file.name)
 
-                if uploaded_files is not None:
-                    #!removing this because its broken
-                    # # Track current files
-                    # current_files = {file.name: file for file in uploaded_files}
+                    if uploaded_files is not None:
+                        #!removing this because its broken
+                        # # Track current files
+                        # current_files = {file.name: file for file in uploaded_files}
 
-                    # # Determine files that have been added
-                    # added_files = [file_name for file_name in current_files if file_name not in st.session_state.uploaded_files]
-                    # files_to_remove = [
-                    #     file_name for file_name in st.session_state.uploaded_files 
-                    #     if file_name not in added_files
-                    # ]
-                    # Track current files from the file uploader
-                    current_files = {file.name: file for file in uploaded_files}
+                        # # Determine files that have been added
+                        # added_files = [file_name for file_name in current_files if file_name not in st.session_state.uploaded_files]
+                        # files_to_remove = [
+                        #     file_name for file_name in st.session_state.uploaded_files 
+                        #     if file_name not in added_files
+                        # ]
+                        # Track current files from the file uploader
+                        current_files = {file.name: file for file in uploaded_files}
 
-                    # Determine files that have been added (newly uploaded files)
-                    added_files = [file_name for file_name in current_files if file_name not in st.session_state.uploaded_files]
+                        # Determine files that have been added (newly uploaded files)
+                        added_files = [file_name for file_name in current_files if file_name not in st.session_state.uploaded_files]
 
-                    # Determine files that have been removed (no longer in the uploader)
-                    files_to_remove = [
-                        file_name for file_name in st.session_state.uploaded_files 
-                        if file_name not in current_files
-                    ]
+                        # Determine files that have been removed (no longer in the uploader)
+                        files_to_remove = [
+                            file_name for file_name in st.session_state.uploaded_files 
+                            if file_name not in current_files
+                        ]
 
-                    #* deletes the files that are not in the current_files
-                    for file_name in files_to_remove:
-                        # create_log_entry(f"Action: File Removed - {file_name}")
+                        #* deletes the files that are not in the current_files
+                        for file_name in files_to_remove:
+                            # create_log_entry(f"Action: File Removed - {file_name}")
 
-                        # Update `st.session_state.audio_files` to exclude the removed file
-                        st.session_state.audio_files = [f for f in st.session_state.audio_files if not f.endswith(file_name)]
-                        st.session_state.file_change_detected = True
+                            # Update `st.session_state.audio_files` to exclude the removed file
+                            st.session_state.audio_files = [f for f in st.session_state.audio_files if not f.endswith(file_name)]
+                            st.session_state.file_change_detected = True
 
-                        username = st.session_state["username"]
-
-                        # Delete the corresponding file from the directory
-                        audio_file_name = "audio_" + file_name
-                        full_path = os.path.join(username, audio_file_name)  # Root directory or adjust to your save directory
-                        if os.path.exists(full_path):
-                            try:
-                                # print(full_path)
-                                os.remove(full_path)  # Delete the file 
-                                
-                                create_log_entry(f"Action: File Deleted - {full_path}")
-                                del st.session_state.uploaded_files[file_name]
-
-                            except Exception as e:
-                                st.error(f"Error deleting file {file_name}: {e}")
-                                create_log_entry(f"Error deleting file {file_name}: {e}")                    
-
-
-
-                    for file_name in added_files:
-                        create_log_entry(f"Action: File Uploaded - {file_name}")
-                        file = current_files[file_name]
-                        st.session_state.uploaded_files[file_name] = current_files[file_name]
-
-                        try:
-                            audio_content = file.read()
-                            saved_path = save_audio_file(audio_content, file_name)
-                            if is_valid_mp3(saved_path):
-                                st.session_state.audio_files.append(saved_path)
-                                st.session_state.file_change_detected = True
-                            else:
-                                st.error(f"{saved_path[2:]} is an Invalid MP3 or WAV File")
-                                create_log_entry(f"Error: {saved_path[2:]} is an Invalid MP3 or WAV File")
-                        except Exception as e:
-                            st.error(f"Error loading audio file: {e}")
-                            create_log_entry(f"Error loading audio file: {e}")  
-
-                    if st.session_state.uploaded_files:
-                        st.subheader("Uploaded Audio Files")
-                        for file_name, file_obj in st.session_state.uploaded_files.items():
-                            with st.expander(f"Audio: {file_name}"):
-                                st.audio(file_obj, format="audio/mp3", start_time=0)
-
-                    # Determine files that have been removed
-                    # removed_files = [file_name for file_name in st.session_state.uploaded_files if file_name not in current_files]
-                    # for file_name in removed_files:
-                    #     create_log_entry(f"Action: File Removed - {file_name}")
-                    #     st.session_state.audio_files = [f for f in st.session_state.audio_files if not f.endswith(file_name)]
-                    #     st.session_state.file_change_detected = True
-
-                    # Update session state with the current file list if a change was detected
-                    if st.session_state.file_change_detected:
-                        st.session_state.uploaded_files = current_files
-                        st.session_state.file_change_detected = False
-
-                
-                audio_files = list(st.session_state.audio_files)
-                # st.write(audio_files)
-                # print(st.session_state.audio_files)
-                # print(type(audio_files))
-
-            elif method == "Upload Folder":
-                # create_log_entry("Method Chosen: Folder Upload")
-                # Initialize the session state for folder_path
-                selected_folder_path = st.session_state.get("folder_path", None)
-
-                # Create two columns for buttons
-                col1, col2 = st.columns(spec=[2, 8])
-
-                with col1:
-                    # Button to trigger folder selection
-                    folder_select_button = st.button("Upload Folder")
-                    if folder_select_button:
-                        selected_folder_path = select_folder()  # Assume this is a function that handles folder selection
-                        if selected_folder_path:
-                            st.session_state.folder_path = selected_folder_path
-                            create_log_entry(f"Action: Folder Uploaded - {selected_folder_path}")
-
-                with col2:
-                    # Option to remove the selected folder
-                    if selected_folder_path:
-                        remove_folder_button = st.button("Remove Uploaded Folder")
-                        if remove_folder_button:
                             username = st.session_state["username"]
-                            st.session_state.folder_path = None
-                            selected_folder_path = None
-                            directory = username
-                            delete_mp3_files(directory)
-                            create_log_entry("Action: Uploaded Folder Removed")
-                            success_message = "Uploaded folder has been removed."
 
-                # Display the success message if it exists
-                if 'success_message' in locals():
-                    st.success(success_message)
+                            # Delete the corresponding file from the directory
+                            audio_file_name = "audio_" + file_name
+                            full_path = os.path.join(username, audio_file_name)  # Root directory or adjust to your save directory
+                            if os.path.exists(full_path):
+                                try:
+                                    # print(full_path)
+                                    os.remove(full_path)  # Delete the file 
+                                    
+                                    create_log_entry(f"Action: File Deleted - {full_path}")
+                                    del st.session_state.uploaded_files[file_name]
 
-                # Display the selected folder path
-                if selected_folder_path:
-                    st.write("Uploaded folder path:", selected_folder_path)
-
-                    # Get all files in the selected folder
-                    files_in_folder = os.listdir(selected_folder_path)
-                    st.write("Files in the folder:")
-
-                    # Process each file
-                    for file_name in files_in_folder:
-                        try:
-                            file_path = os.path.join(selected_folder_path, file_name)
-                            with open(file_path, 'rb') as file:
-                                audio_content = file.read()
-                                just_file_name = os.path.basename(file_name)
-                                save_path = os.path.join(just_file_name)
-                                saved_file_path = save_audio_file(audio_content, save_path)
-                                if is_valid_mp3(saved_file_path):
-                                    audio_files.append(saved_file_path)
-                                else:
-                                    st.error(f"{saved_file_path[2:]} is an Invalid MP3 or WAV File")
-                                    create_log_entry(f"Error: {saved_file_path[2:]} is an Invalid MP3 or WAV File")
+                                except Exception as e:
+                                    st.error(f"Error deleting file {file_name}: {e}")
+                                    create_log_entry(f"Error deleting file {file_name}: {e}")                    
 
 
-                        except Exception as e:
-                            st.warning(f"Error processing file '{file_name}': {e}")
-                    
-                    #Filter files that are not in MP3 or WAV extensions
-                    audio_files = list(filter(partial(is_not, None), audio_files))
 
-                    st.write(audio_files)
-                    # print(audio_files)
-
-            # Submit button
-            submit = st.button("Submit", use_container_width=True)
-
-            if submit and audio_files == []:
-                create_log_entry("Service Request: Fail (No Files Uploaded)")
-                st.error("No Files Uploaded, Please Try Again!")
-
-
-            elif submit:
-                combined_results = []
-                all_text = {}
-                # if not save_audited_transcript or (save_audited_transcript and save_to_path != None):
-                current = 1
-                end = len(audio_files)
-                for audio_file in audio_files:
-                    print(audio_file)
-                    if not os.path.isfile(audio_file):
-                        st.error(f"{audio_file[2:]} Not Found, Please Try Again!")
-                        continue
-                    else:
-                        try:
-                            with st.spinner("Transcribing & Auditing In Progress..."):
-                                if transcribe_option == "OpenAI (Recommended)":   
-                                    text, language_code = speech_to_text(audio_file)
-                                    if audit_option == "OpenAI (Recommended)":
-                                        result = LLM_audit(text)
-                                        if result["Overall Result"] == "Fail":
-                                            status = "<span style='color: red;'> (FAIL)</span>"
-                                        else:
-                                            status = "<span style='color: green;'> (PASS)</span>"
-                                    elif audit_option == "Groq":
-                                        result = groq_LLM_audit(text)
-                                        if result["Overall Result"] == "Fail":
-                                            status = "<span style='color: red;'> (FAIL)</span>"
-                                        else:
-                                            status = "<span style='color: green;'> (PASS)</span>"
-                                elif transcribe_option == "Groq":
-                                    text, language_code = speech_to_text_groq(audio_file)
-                                    if audit_option == "OpenAI (Recommended)":
-                                        result = LLM_audit(text)
-                                        if result["Overall Result"] == "Fail":
-                                            status = "<span style='color: red;'> (FAIL)</span>"
-                                        else:
-                                            status = "<span style='color: green;'> (PASS)</span>"
-                                    elif audit_option == "Groq":
-                                        result = groq_LLM_audit(text)
-                                        if result["Overall Result"] == "Fail":
-                                            status = "<span style='color: red;'> (FAIL)</span>"
-                                        else:
-                                            status = "<span style='color: green;'> (PASS)</span>"
-                        except Exception as e:
-                            error_message = f"Error processing file: {audio_file} - {e}"
-                            create_log_entry(error_message)
-                            st.error(error_message)
-                            continue
-                        col1, col2 = st.columns([0.9,0.1])
-                        with col1:
-                            with st.expander(audio_file[2:] + f" ({language_code})"):
-                            # with st.expander(audio_file[2:]):
-                                st.write()
-                                tab1, tab2, tab3 = st.tabs(["Converted Text", "Audit Result", "Download Content"])
-                        with col2:
-                            st.write(f"({current} / {end})")
-                            st.markdown(status, unsafe_allow_html=True)
-                        with tab1:
-                            st.write(text)
-                            all_text[audio_file[2:]] = text
-                            print(all_text)
-                            handle_download_text(count=audio_files.index(audio_file) ,data=text, file_name=f'{audio_file[2:].replace(".mp3", ".txt").replace(".wav", ".txt")}', mime='text/plain', log_message="Action: Text File Downloaded")
-                        with tab2:
-                            st.write(result)
-                            # Convert result to JSON string
-                            json_data = json.dumps(result, indent=4)
-                            filename = audio_file[2:]
-                            if isinstance(result, dict) and "Stage 1" in result:
-                                cleaned_result_stage1 = result["Stage 1"]
-                                cleaned_result_stage2 = result.get("Stage 2", [])  # Default to an empty list if Stage 2 is not present
-                                overall_result = result.get("Overall Result", "Pass")
-                            else:
-                                cleaned_result_stage1 = cleaned_result_stage2 = result
-                                overall_result = "Pass"
-
-                            # Process Stage 1 results
-                            if isinstance(cleaned_result_stage1, list) and all(isinstance(item, dict) for item in cleaned_result_stage1):
-                                df_stage1 = pd.json_normalize(cleaned_result_stage1)
-                                df_stage1['Stage'] = 'Stage 1'
-                            else:
-                                df_stage1 = pd.DataFrame(columns=['Stage'])  # Create an empty DataFrame for Stage 1 if no valid results
-
-                            # Process Stage 2 results
-                            if isinstance(cleaned_result_stage2, list) and all(isinstance(item, dict) for item in cleaned_result_stage2):
-                                df_stage2 = pd.json_normalize(cleaned_result_stage2)
-                                df_stage2['Stage'] = 'Stage 2'
-                            else:
-                                df_stage2 = pd.DataFrame(columns=['Stage'])  # Create an empty DataFrame for Stage 2 if no valid results
-
-                            # Concatenate Stage 1 and Stage 2 results
-                            df = pd.concat([df_stage1, df_stage2], ignore_index=True)
-
-                            # Add the Overall Result as a new column (same value for all rows)
-                            df['Overall Result'] = overall_result
-
-                            # Add the filename as a new column (same value for all rows)
-                            df['Filename'] = filename
-
-                            # Save DataFrame to CSV
-                            output = BytesIO()
-                            df.to_csv(output, index=False)
-
-                            # Get CSV data
-                            csv_data = output.getvalue().decode('utf-8')
+                        for file_name in added_files:
+                            create_log_entry(f"Action: File Uploaded - {file_name}")
+                            file = current_files[file_name]
+                            st.session_state.uploaded_files[file_name] = current_files[file_name]
 
                             try:
-                                col1, col2 = st.columns([2, 6])
-                                with col1:
-                                    handle_download_json(count=audio_files.index(audio_file) ,data=json_data, file_name=f'{audio_file[2:]}.json', mime='application/json', log_message="Action: JSON File Downloaded")
-
-                                with col2:
-                                    handle_download_csv(count=audio_files.index(audio_file), data=csv_data, file_name=f'{audio_file[2:]}.csv', mime='text/csv', log_message="Action: CSV File Downloaded")
-                            
+                                audio_content = file.read()
+                                saved_path = save_audio_file(audio_content, file_name)
+                                if is_valid_mp3(saved_path):
+                                    st.session_state.audio_files.append(saved_path)
+                                    st.session_state.file_change_detected = True
+                                else:
+                                    st.error(f"{saved_path[2:]} is an Invalid MP3 or WAV File")
+                                    create_log_entry(f"Error: {saved_path[2:]} is an Invalid MP3 or WAV File")
                             except Exception as e:
-                                create_log_entry(f"{e}")
-                                st.error(f"Error processing data: {e}")
-                        with tab3:
-                            zip_buffer = handle_combined_download(
-                                data_text=text,
-                                data_json=json_data,
-                                data_csv=csv_data,
-                                file_name_prefix=audio_file[2:]
-                            )
-                            zip_download(count=audio_files.index(audio_file) ,data=zip_buffer, file_name=f'{audio_file[2:]}.zip', mime="application/zip", log_message="Action: Audited Results Zip File Downloaded")
-                            
-                    current += 1
-                    create_log_entry(f"Successfully Audited: {audio_file[2:]}")
-                    df.loc[len(df)] = pd.Series(dtype='float64')
-                    combined_results.append(df)
-                #     if save_audited_transcript:
-                #         if save_to_path:
-                #             try:
-                #                 # Ensure the directory exists
-                #                 os.makedirs(os.path.dirname(save_to_path), exist_ok=True)
-                #                 file_name_without_extension, _ = os.path.splitext(audio_file[2:])
-                #                 full_path = os.path.join(save_to_path, file_name_without_extension + ".csv")
-                #                 # df = pd.json_normalize(csv_data)
-                #                 # Save the DataFrame as a CSV to the specified path
-                #                 df.to_csv(full_path, index=False)
-                #                 print(f"Saved audited results (CSV) to {save_to_path}")
-                #             except Exception as e:
-                #                 print(f"Failed to save file: {e}")
-                #         else:
-                #             print("Save path not specified.")
-                # if save_audited_transcript:
-                #     if save_to_path:
-                #         combined_df = pd.concat(combined_results, ignore_index=True)
-                #         os.makedirs(os.path.dirname(save_to_path), exist_ok=True)
-                #         full_path = os.path.join(save_to_path, "combined_results.csv")
-                #         combined_df.to_csv(full_path, index=False)
+                                st.error(f"Error loading audio file: {e}")
+                                create_log_entry(f"Error loading audio file: {e}")  
 
-                if combined_results != []:
-                    # Concatenate all DataFrames
-                    combined_df = pd.concat(combined_results, ignore_index=True)
+                        if st.session_state.uploaded_files:
+                            st.subheader("Uploaded Audio Files")
+                            for file_name, file_obj in st.session_state.uploaded_files.items():
+                                with st.expander(f"Audio: {file_name}"):
+                                    st.audio(file_obj, format="audio/mp3", start_time=0)
 
-                    # Create an in-memory CSV using BytesIO
-                    output = BytesIO()
-                    combined_df.to_csv(output, index=False)
-                    output.seek(0)  # Reset buffer position to the start
+                        # Determine files that have been removed
+                        # removed_files = [file_name for file_name in st.session_state.uploaded_files if file_name not in current_files]
+                        # for file_name in removed_files:
+                        #     create_log_entry(f"Action: File Removed - {file_name}")
+                        #     st.session_state.audio_files = [f for f in st.session_state.audio_files if not f.endswith(file_name)]
+                        #     st.session_state.file_change_detected = True
 
-                    # Get the CSV data as a string
-                    combined_csv_data = output.getvalue().decode('utf-8')
-                    with st.spinner("Preparing Consolidated Results..."):
-                        zip_buffer = handle_combined_audit_result_download(
-                                        data_text=all_text,
-                                        data_csv=combined_csv_data,
-                                        file_name_prefix="combined_audit_results"
-                                    )
+                        # Update session state with the current file list if a change was detected
+                        if st.session_state.file_change_detected:
+                            st.session_state.uploaded_files = current_files
+                            st.session_state.file_change_detected = False
+
+                    
+                    audio_files = list(st.session_state.audio_files)
+                    # st.write(audio_files)
+                    # print(st.session_state.audio_files)
+                    # print(type(audio_files))
+
+                elif method == "Upload Folder":
+                    # create_log_entry("Method Chosen: Folder Upload")
+                    # Initialize the session state for folder_path
+                    selected_folder_path = st.session_state.get("folder_path", None)
+
+                    # Create two columns for buttons
+                    col1, col2 = st.columns(spec=[2, 8])
+
+                    with col1:
+                        # Button to trigger folder selection
+                        folder_select_button = st.button("Upload Folder")
+                        if folder_select_button:
+                            selected_folder_path = select_folder()  # Assume this is a function that handles folder selection
+                            if selected_folder_path:
+                                st.session_state.folder_path = selected_folder_path
+                                create_log_entry(f"Action: Folder Uploaded - {selected_folder_path}")
+
+                    with col2:
+                        # Option to remove the selected folder
+                        if selected_folder_path:
+                            remove_folder_button = st.button("Remove Uploaded Folder")
+                            if remove_folder_button:
+                                username = st.session_state["username"]
+                                st.session_state.folder_path = None
+                                selected_folder_path = None
+                                directory = username
+                                delete_mp3_files(directory)
+                                create_log_entry("Action: Uploaded Folder Removed")
+                                success_message = "Uploaded folder has been removed."
+
+                    # Display the success message if it exists
+                    if 'success_message' in locals():
+                        st.success(success_message)
+
+                    # Display the selected folder path
+                    if selected_folder_path:
+                        st.write("Uploaded folder path:", selected_folder_path)
+
+                        # Get all files in the selected folder
+                        files_in_folder = os.listdir(selected_folder_path)
+                        st.write("Files in the folder:")
+
+                        # Process each file
+                        for file_name in files_in_folder:
+                            try:
+                                file_path = os.path.join(selected_folder_path, file_name)
+                                with open(file_path, 'rb') as file:
+                                    audio_content = file.read()
+                                    just_file_name = os.path.basename(file_name)
+                                    save_path = os.path.join(just_file_name)
+                                    saved_file_path = save_audio_file(audio_content, save_path)
+                                    if is_valid_mp3(saved_file_path):
+                                        audio_files.append(saved_file_path)
+                                    else:
+                                        st.error(f"{saved_file_path[2:]} is an Invalid MP3 or WAV File")
+                                        create_log_entry(f"Error: {saved_file_path[2:]} is an Invalid MP3 or WAV File")
+
+
+                            except Exception as e:
+                                st.warning(f"Error processing file '{file_name}': {e}")
                         
-                    combined_audit_result_download(data=zip_buffer, file_name='CombinedAuditResults.zip', mime="application/zip", log_message="Action: Audited Results Zip File Downloaded")  
-                    username = st.session_state["username"]
-                    directory = username
-                    delete_mp3_files(directory)
-                # else:
-                #     st.error("Please specify a destination folder to save audited transcript!")
+                        #Filter files that are not in MP3 or WAV extensions
+                        audio_files = list(filter(partial(is_not, None), audio_files))
+
+                        st.write(audio_files)
+                        # print(audio_files)
+
+                # Submit button
+                submit = st.button("Submit", use_container_width=True)
+
+                if submit and audio_files == []:
+                    create_log_entry("Service Request: Fail (No Files Uploaded)")
+                    st.error("No Files Uploaded, Please Try Again!")
 
 
-            st.subheader("Event Log")
-            log_container = st.container()
-            with log_container:
-                # Read and display the log content
-                log_content = read_log_file()
-                log_content = log_content.replace('\n', '<br>')
+                elif submit:
+                    combined_results = []
+                    all_text = {}
+                    # if not save_audited_transcript or (save_audited_transcript and save_to_path != None):
+                    current = 1
+                    end = len(audio_files)
+                    for audio_file in audio_files:
+                        print(audio_file)
+                        if not os.path.isfile(audio_file):
+                            st.error(f"{audio_file[2:]} Not Found, Please Try Again!")
+                            continue
+                        else:
+                            try:
+                                with st.spinner("Transcribing & Auditing In Progress..."):
+                                    if transcribe_option == "OpenAI (Recommended)":   
+                                        text, language_code = speech_to_text(audio_file)
+                                        if audit_option == "OpenAI (Recommended)":
+                                            result = LLM_audit(text)
+                                            if result["Overall Result"] == "Fail":
+                                                status = "<span style='color: red;'> (FAIL)</span>"
+                                            else:
+                                                status = "<span style='color: green;'> (PASS)</span>"
+                                        elif audit_option == "Groq":
+                                            result = groq_LLM_audit(text)
+                                            if result["Overall Result"] == "Fail":
+                                                status = "<span style='color: red;'> (FAIL)</span>"
+                                            else:
+                                                status = "<span style='color: green;'> (PASS)</span>"
+                                    elif transcribe_option == "Groq":
+                                        text, language_code = speech_to_text_groq(audio_file)
+                                        if audit_option == "OpenAI (Recommended)":
+                                            result = LLM_audit(text)
+                                            if result["Overall Result"] == "Fail":
+                                                status = "<span style='color: red;'> (FAIL)</span>"
+                                            else:
+                                                status = "<span style='color: green;'> (PASS)</span>"
+                                        elif audit_option == "Groq":
+                                            result = groq_LLM_audit(text)
+                                            if result["Overall Result"] == "Fail":
+                                                status = "<span style='color: red;'> (FAIL)</span>"
+                                            else:
+                                                status = "<span style='color: green;'> (PASS)</span>"
+                            except Exception as e:
+                                error_message = f"Error processing file: {audio_file} - {e}"
+                                create_log_entry(error_message)
+                                st.error(error_message)
+                                continue
+                            col1, col2 = st.columns([0.9,0.1])
+                            with col1:
+                                with st.expander(audio_file[2:] + f" ({language_code})"):
+                                # with st.expander(audio_file[2:]):
+                                    st.write()
+                                    tab1, tab2, tab3 = st.tabs(["Converted Text", "Audit Result", "Download Content"])
+                            with col2:
+                                st.write(f"({current} / {end})")
+                                st.markdown(status, unsafe_allow_html=True)
+                            with tab1:
+                                st.write(text)
+                                all_text[audio_file[2:]] = text
+                                print(all_text)
+                                handle_download_text(count=audio_files.index(audio_file) ,data=text, file_name=f'{audio_file[2:].replace(".mp3", ".txt").replace(".wav", ".txt")}', mime='text/plain', log_message="Action: Text File Downloaded")
+                            with tab2:
+                                st.write(result)
+                                # Convert result to JSON string
+                                json_data = json.dumps(result, indent=4)
+                                filename = audio_file[2:]
+                                if isinstance(result, dict) and "Stage 1" in result:
+                                    cleaned_result_stage1 = result["Stage 1"]
+                                    cleaned_result_stage2 = result.get("Stage 2", [])  # Default to an empty list if Stage 2 is not present
+                                    overall_result = result.get("Overall Result", "Pass")
+                                else:
+                                    cleaned_result_stage1 = cleaned_result_stage2 = result
+                                    overall_result = "Pass"
 
-                # Display the log with custom styling
-                html_content = (
-                    "<div style='height:200px; overflow-y:scroll; background-color:#2b2b2b; color:#f8f8f2; "
-                    "padding:10px; border-radius:5px; border:1px solid #444;'>"
-                    "<pre style='font-family: monospace; font-size: 13px; line-height: 1.5em;'>{}</pre>"
-                    "</div>"
-                ).format(log_content)
-                
-                st.markdown(html_content, unsafe_allow_html=True)
-                
-            csv_file = 'logfile.csv'
-            st.markdown("<br>", unsafe_allow_html=True)
-            if os.path.exists(csv_file):
-                with open(csv_file, 'rb') as file:
-                    file_contents = file.read()
-                    handle_download_log_file(data=file_contents, file_name='log.csv', mime='text/csv', log_message="Action: Event Log Downloaded")
+                                # Process Stage 1 results
+                                if isinstance(cleaned_result_stage1, list) and all(isinstance(item, dict) for item in cleaned_result_stage1):
+                                    df_stage1 = pd.json_normalize(cleaned_result_stage1)
+                                    df_stage1['Stage'] = 'Stage 1'
+                                else:
+                                    df_stage1 = pd.DataFrame(columns=['Stage'])  # Create an empty DataFrame for Stage 1 if no valid results
+
+                                # Process Stage 2 results
+                                if isinstance(cleaned_result_stage2, list) and all(isinstance(item, dict) for item in cleaned_result_stage2):
+                                    df_stage2 = pd.json_normalize(cleaned_result_stage2)
+                                    df_stage2['Stage'] = 'Stage 2'
+                                else:
+                                    df_stage2 = pd.DataFrame(columns=['Stage'])  # Create an empty DataFrame for Stage 2 if no valid results
+
+                                # Concatenate Stage 1 and Stage 2 results
+                                df = pd.concat([df_stage1, df_stage2], ignore_index=True)
+
+                                # Add the Overall Result as a new column (same value for all rows)
+                                df['Overall Result'] = overall_result
+
+                                # Add the filename as a new column (same value for all rows)
+                                df['Filename'] = filename
+
+                                # Save DataFrame to CSV
+                                output = BytesIO()
+                                df.to_csv(output, index=False)
+
+                                # Get CSV data
+                                csv_data = output.getvalue().decode('utf-8')
+
+                                try:
+                                    col1, col2 = st.columns([2, 6])
+                                    with col1:
+                                        handle_download_json(count=audio_files.index(audio_file) ,data=json_data, file_name=f'{audio_file[2:]}.json', mime='application/json', log_message="Action: JSON File Downloaded")
+
+                                    with col2:
+                                        handle_download_csv(count=audio_files.index(audio_file), data=csv_data, file_name=f'{audio_file[2:]}.csv', mime='text/csv', log_message="Action: CSV File Downloaded")
+                                
+                                except Exception as e:
+                                    create_log_entry(f"{e}")
+                                    st.error(f"Error processing data: {e}")
+                            with tab3:
+                                zip_buffer = handle_combined_download(
+                                    data_text=text,
+                                    data_json=json_data,
+                                    data_csv=csv_data,
+                                    file_name_prefix=audio_file[2:]
+                                )
+                                zip_download(count=audio_files.index(audio_file) ,data=zip_buffer, file_name=f'{audio_file[2:]}.zip', mime="application/zip", log_message="Action: Audited Results Zip File Downloaded")
+                                
+                        current += 1
+                        create_log_entry(f"Successfully Audited: {audio_file[2:]}")
+                        df.loc[len(df)] = pd.Series(dtype='float64')
+                        combined_results.append(df)
+                    #     if save_audited_transcript:
+                    #         if save_to_path:
+                    #             try:
+                    #                 # Ensure the directory exists
+                    #                 os.makedirs(os.path.dirname(save_to_path), exist_ok=True)
+                    #                 file_name_without_extension, _ = os.path.splitext(audio_file[2:])
+                    #                 full_path = os.path.join(save_to_path, file_name_without_extension + ".csv")
+                    #                 # df = pd.json_normalize(csv_data)
+                    #                 # Save the DataFrame as a CSV to the specified path
+                    #                 df.to_csv(full_path, index=False)
+                    #                 print(f"Saved audited results (CSV) to {save_to_path}")
+                    #             except Exception as e:
+                    #                 print(f"Failed to save file: {e}")
+                    #         else:
+                    #             print("Save path not specified.")
+                    # if save_audited_transcript:
+                    #     if save_to_path:
+                    #         combined_df = pd.concat(combined_results, ignore_index=True)
+                    #         os.makedirs(os.path.dirname(save_to_path), exist_ok=True)
+                    #         full_path = os.path.join(save_to_path, "combined_results.csv")
+                    #         combined_df.to_csv(full_path, index=False)
+
+                    if combined_results != []:
+                        # Concatenate all DataFrames
+                        combined_df = pd.concat(combined_results, ignore_index=True)
+
+                        # Create an in-memory CSV using BytesIO
+                        output = BytesIO()
+                        combined_df.to_csv(output, index=False)
+                        output.seek(0)  # Reset buffer position to the start
+
+                        # Get the CSV data as a string
+                        combined_csv_data = output.getvalue().decode('utf-8')
+                        with st.spinner("Preparing Consolidated Results..."):
+                            zip_buffer = handle_combined_audit_result_download(
+                                            data_text=all_text,
+                                            data_csv=combined_csv_data,
+                                            file_name_prefix="combined_audit_results"
+                                        )
+                            
+                        combined_audit_result_download(data=zip_buffer, file_name='CombinedAuditResults.zip', mime="application/zip", log_message="Action: Audited Results Zip File Downloaded")  
+                        username = st.session_state["username"]
+                        directory = username
+                        delete_mp3_files(directory)
+                    # else:
+                    #     st.error("Please specify a destination folder to save audited transcript!")
+
+
+                st.subheader("Event Log")
+                log_container = st.container()
+                with log_container:
+                    # Read and display the log content
+                    log_content = read_log_file()
+                    log_content = log_content.replace('\n', '<br>')
+
+                    # Display the log with custom styling
+                    html_content = (
+                        "<div style='height:200px; overflow-y:scroll; background-color:#2b2b2b; color:#f8f8f2; "
+                        "padding:10px; border-radius:5px; border:1px solid #444;'>"
+                        "<pre style='font-family: monospace; font-size: 13px; line-height: 1.5em;'>{}</pre>"
+                        "</div>"
+                    ).format(log_content)
+                    
+                    st.markdown(html_content, unsafe_allow_html=True)
+                    
+                csv_file = 'logfile.csv'
+                st.markdown("<br>", unsafe_allow_html=True)
+                if os.path.exists(csv_file):
+                    with open(csv_file, 'rb') as file:
+                        file_contents = file.read()
+                        handle_download_log_file(data=file_contents, file_name='log.csv', mime='text/csv', log_message="Action: Event Log Downloaded")
     except Exception as e:
         # st.error(f"An error occurred: {e}")
         create_log_entry(f"Error: {e}")
