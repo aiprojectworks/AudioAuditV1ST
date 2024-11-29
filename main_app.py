@@ -88,11 +88,37 @@ def is_admin(username: str) -> bool:
     finally:
         session.close()
 
+def validate_password(password: str) -> Tuple[bool, str]:
+    """
+    Validate the password against specific requirements.
+    Requirements:
+    - Minimum 8 characters
+    - At least one uppercase letter
+    - At least one lowercase letter
+    - At least one digit
+    - At least one special character
+    """
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long."
+    if not any(char.isupper() for char in password):
+        return False, "Password must contain at least one uppercase letter."
+    if not any(char.islower() for char in password):
+        return False, "Password must contain at least one lowercase letter."
+    if not any(char.isdigit() for char in password):
+        return False, "Password must contain at least one digit."
+    if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+        return False, "Password must contain at least one special character."
+    return True, ""
+
 def add_user(username: str, password: str, role: str = "user") -> Tuple[bool, str]:
     """Add a new user to the database"""
     try:
+        # Validate password
         session = Session()
         new_user = User(username=username, password=password, role=role)
+        is_valid, message = validate_password(password)
+        if not is_valid:
+            return False, message
         session.add(new_user)
         session.commit()
         return True, "User added successfully"
