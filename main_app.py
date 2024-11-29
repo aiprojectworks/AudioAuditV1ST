@@ -96,9 +96,9 @@ def cleanup_on_logout(username = st.session_state.get("username")):
 
     st.session_state.clear()   
 
-def heartbeat(username):
-    with open("user_activity.log", 'a') as f:
-        f.write(f"User '{username}' active at {datetime.now()}\n")
+# def heartbeat(username):
+#     with open("user_activity.log", 'a') as f:
+#         f.write(f"User '{username}' active at {datetime.now()}\n")
 
 def start_beating(username):
     """Start heartbeat thread"""
@@ -114,14 +114,13 @@ def start_beating(username):
     if ctx and runtime.is_active_session(session_id=ctx.session_id):
         # Session is still active
         thread.start()
-        heartbeat(username)
+        #!no logs
+        # heartbeat(username)
     else:
         # Session ended - clean up
         print(f"Session ended for user: {username}")
         cleanup_on_logout(username)
         return
-
-
 
 # Authenticate function
 def authenticate(username, password):
