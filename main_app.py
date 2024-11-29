@@ -46,6 +46,11 @@ from streamlit_cookies_controller import CookieController
 # from streamlit.web.server.websocket_headers import _get_websocket_headers 
 # from urllib.parse import unquote
 # import extra_streamlit_components as stx
+# from streamlit.web.server.websocket_headers import _get_websocket_headers
+import threading
+from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+from streamlit.runtime import get_instance
+
 
 
 #testestest
@@ -71,6 +76,52 @@ client = OpenAI(api_key=st.secrets["API_KEY"])
 
 controller = CookieController()
 
+def cleanup_on_logout(username = st.session_state.get("username")):
+    """Handle cleanup when user logs out"""
+    # username = st.session_state.get("username")
+    if username:
+        # Clear files
+        directory = username
+        if os.path.exists(directory):
+            delete_mp3_files(directory)
+            directory = "./" + directory
+            os.rmdir(directory)
+    
+    # Clear cookies
+    all_cookies = controller.getAll()
+    if all_cookies:
+        cookie_keys = list(all_cookies.keys())
+        for cookie in cookie_keys:
+            controller.remove(cookie)
+
+    st.session_state.clear()   
+
+def heartbeat(username):
+    with open("user_activity.log", 'a') as f:
+        f.write(f"User '{username}' active at {datetime.now()}\n")
+
+def start_beating(username):
+    """Start heartbeat thread"""
+    thread = threading.Timer(interval=2, function=start_beating, args=(username,))
+    
+    # Add Streamlit context to thread
+    add_script_run_ctx(thread)
+    
+    # Get current session context
+    ctx = get_script_run_ctx()
+    runtime = get_instance()
+    
+    if ctx and runtime.is_active_session(session_id=ctx.session_id):
+        # Session is still active
+        thread.start()
+        heartbeat(username)
+    else:
+        # Session ended - clean up
+        print(f"Session ended for user: {username}")
+        cleanup_on_logout(username)
+        return
+
+
 
 # Authenticate function
 def authenticate(username, password):
@@ -87,6 +138,12 @@ def authenticate(username, password):
 def login_page():
     """Display login form and authenticate users."""
     st.title("Login Portal")
+    
+    all_cookies = controller.getAll()
+    if (all_cookies):
+        for cookie in list(all_cookies):
+            controller.remove(cookie)
+
 
     # Group inputs and button in a form for "Enter" support
     with st.form("login_form"):
@@ -100,11 +157,39 @@ def login_page():
     if login_button:
         user = authenticate(username, password)  # Call authentication function
         if user:
+
+            # controller.remove("username")
+
+            # cookie_options = {
+            #     'path': '/',
+            #     'expires_at': datetime.now() + timedelta(days=7),
+            #     'key': 'username',
+            #     'value': user.username,
+            #     'domain': 'localhost',  # Add this line
+            #     'httpOnly': True,
+            #     'max_age': 2592000  # 30 days in seconds
+
+            # }
+
+            try:
             # cookie_manager.set("username", user.username, expires_at=datetime.now() + timedelta(days=1))
-            controller.set("username", user.username)
-            st.session_state["logged_in"] = True
-            st.session_state["username"] = user.username
-            st.rerun()  # Refresh app state
+                controller.set("username", user.username)
+                controller.save()
+                verification = controller.get('username')
+                print(f"Cookie verification immediately after setting: {verification}")
+                
+                if verification:
+                    st.session_state["logged_in"] = True
+                    st.session_state["username"] = user.username
+                    st.rerun()
+                else:
+                    st.error("Failed to set cookie! Please check browser settings.")
+            except Exception as e:
+                st.error(f"Error setting cookie: {e}")
+                st.session_state["logged_in"] = True
+                st.session_state["username"] = user.username
+                st.rerun()
+
         else:
             st.error("Invalid username or password!")
 
@@ -1111,9 +1196,22 @@ def is_valid_mp3(file_path):
     
 
 def main():
-    all_cookies = controller.getAll()
-    if all_cookies:
-        print("cookies", all_cookies)
+    if 'cookies' not in st.session_state:
+        st.session_state.cookies = controller
+
+    try:
+        username_cookie = controller.get("username")
+        if username_cookie:
+            print("Found username cookie:", username_cookie)
+            st.session_state["logged_in"] = True
+            st.session_state["username"] = username_cookie
+        else:
+            print("No username cookie found")
+            st.session_state["logged_in"] = False
+            st.session_state["username"] = None
+    except Exception as e:
+        print(f"Error: {e}")
+
     try:
         cookies = controller.get("username")
         if cookies:
@@ -1127,28 +1225,15 @@ def main():
             # Show the login page if not logged in
             login_page()
         else:
+            if 'heartbeat_started' not in st.session_state:
+                st.session_state.heartbeat_started = True
+                start_beating(st.session_state["username"])
+
             # After successful login, show the main dashboard
             st.sidebar.success(f"Logged in as: {st.session_state['username']}")
             if st.sidebar.button("Logout"):
-                # st.write(cookie_manager.get_all())
-                username = st.session_state.get("username", None)
-                if username:
-                    controller.remove("username")
-                    all_cookies = controller.getAll()
-                    for cookie in list(all_cookies.keys()):
-                        controller.remove(cookie)  # Delete each cookie
-                    username = st.session_state["username"]
-                    directory = username
-                    if os.path.exists(directory):
-                        delete_mp3_files(directory)
-                        directory = "./" + directory
-                        os.rmdir(directory)
-                    st.session_state.clear()
-                # st.session_state["logged_in"] = False
-                # st.session_state["username"] = None
+                cleanup_on_logout()
                 st.rerun()
-                # st.experimental_rerun()  # Refresh the app after logout
-
             with st.sidebar:
                 st.title("AI Model Selection")
                 transcribe_option = st.radio(
