@@ -142,6 +142,8 @@ def delete_user(username: str) -> Tuple[bool, str]:
                 admin_count = session.query(User).filter_by(role="admin").count()
                 if admin_count <= 1:
                     return False, "Cannot delete the last admin user"
+                if st.session_state.get("username") == username:
+                    return False, "Cannot delete the currently logged in user"
             session.delete(user)
             session.commit()
             return True, "User deleted successfully"
