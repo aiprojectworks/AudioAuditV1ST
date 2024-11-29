@@ -121,8 +121,6 @@ def start_beating(username):
         cleanup_on_logout(username)
         return
 
-
-
 # Authenticate function
 def authenticate(username, password):
     try:

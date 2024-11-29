@@ -7,3 +7,4 @@ __pychache__/
 .vscode/
 admin/
 __pycache__/database.cpython-310.pyc
+user_activity.log
