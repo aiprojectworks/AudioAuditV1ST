@@ -51,7 +51,7 @@ import threading
 from sqlalchemy.exc import IntegrityError
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 from streamlit.runtime import get_instance
-from typing import Optional, Tuple
+from typing import Tuple
 
 
 
