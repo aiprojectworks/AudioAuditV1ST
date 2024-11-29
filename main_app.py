@@ -144,6 +144,7 @@ def delete_user(username: str) -> Tuple[bool, str]:
                     return False, "Cannot delete the last admin user"
                 if st.session_state.get("username") == username:
                     return False, "Cannot delete the currently logged in user"
+            cleanup_on_logout(username)
             session.delete(user)
             session.commit()
             return True, "User deleted successfully"
