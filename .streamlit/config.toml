@@ -1,7 +1,0 @@
-[server]
-enableCORS = false
-enableXsrfProtection = false
-
-[browser]
-serverAddress = "localhost"
-serverPort = 8501
