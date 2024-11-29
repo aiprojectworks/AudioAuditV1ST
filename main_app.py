@@ -19,7 +19,7 @@ import streamlit as st
 # import gc 
 import torch
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 #LLM import
 # from langchain.embeddings import LlamaCppEmbeddings
 # from langchain_community.llms import LlamaCpp
@@ -42,7 +42,7 @@ import zipfile
 import io
 from database import Session, User, seed_users
 # from streamlit_cookies_manager import EncryptedCookieManager
-from streamlit_cookies_controller import CookieController
+# from streamlit_cookies_controller import CookieController
 # from streamlit.web.server.websocket_headers import _get_websocket_headers 
 # from urllib.parse import unquote
 # import extra_streamlit_components as stx
@@ -74,7 +74,7 @@ groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 client = OpenAI(api_key=st.secrets["API_KEY"])
 
 
-controller = CookieController()
+# controller = CookieController()
 
 def cleanup_on_logout(username = st.session_state.get("username")):
     """Handle cleanup when user logs out"""
@@ -88,11 +88,11 @@ def cleanup_on_logout(username = st.session_state.get("username")):
             os.rmdir(directory)
     
     # Clear cookies
-    all_cookies = controller.getAll()
-    if all_cookies:
-        cookie_keys = list(all_cookies.keys())
-        for cookie in cookie_keys:
-            controller.remove(cookie)
+    # all_cookies = controller.getAll()
+    # if all_cookies:
+    #     cookie_keys = list(all_cookies.keys())
+    #     for cookie in cookie_keys:
+    #         controller.remove(cookie)
 
     st.session_state.clear()   
 
@@ -138,10 +138,10 @@ def login_page():
     """Display login form and authenticate users."""
     st.title("Login Portal")
     
-    all_cookies = controller.getAll()
-    if (all_cookies):
-        for cookie in list(all_cookies):
-            controller.remove(cookie)
+    # all_cookies = controller.getAll()
+    # if (all_cookies):
+    #     for cookie in list(all_cookies):
+    #         controller.remove(cookie)
 
 
     # Group inputs and button in a form for "Enter" support
@@ -156,39 +156,9 @@ def login_page():
     if login_button:
         user = authenticate(username, password)  # Call authentication function
         if user:
-
-            # controller.remove("username")
-
-            # cookie_options = {
-            #     'path': '/',
-            #     'expires_at': datetime.now() + timedelta(days=7),
-            #     'key': 'username',
-            #     'value': user.username,
-            #     'domain': 'localhost',  # Add this line
-            #     'httpOnly': True,
-            #     'max_age': 2592000  # 30 days in seconds
-
-            # }
-
-            try:
-            # cookie_manager.set("username", user.username, expires_at=datetime.now() + timedelta(days=1))
-                controller.set("username", user.username)
-                controller.save()
-                verification = controller.get('username')
-                print(f"Cookie verification immediately after setting: {verification}")
-                
-                if verification:
-                    st.session_state["logged_in"] = True
-                    st.session_state["username"] = user.username
-                    st.rerun()
-                else:
-                    st.error("Failed to set cookie! Please check browser settings.")
-            except Exception as e:
-                st.error(f"Error setting cookie: {e}")
-                st.session_state["logged_in"] = True
-                st.session_state["username"] = user.username
-                st.rerun()
-
+            st.session_state["logged_in"] = True
+            st.session_state["username"] = user.username
+            st.rerun()
         else:
             st.error("Invalid username or password!")
 
@@ -1195,28 +1165,12 @@ def is_valid_mp3(file_path):
     
 
 def main():
-    if 'cookies' not in st.session_state:
-        st.session_state.cookies = controller
-
     try:
-        username_cookie = controller.get("username")
-        if username_cookie:
-            print("Found username cookie:", username_cookie)
-            st.session_state["logged_in"] = True
-            st.session_state["username"] = username_cookie
-        else:
-            print("No username cookie found")
-            st.session_state["logged_in"] = False
-            st.session_state["username"] = None
-    except Exception as e:
-        print(f"Error: {e}")
-
-    try:
-        cookies = controller.get("username")
-        if cookies:
-            st.session_state["logged_in"] = True
-            st.session_state["username"] = cookies
-        elif "logged_in" not in st.session_state:
+        # cookies = controller.get("username")
+        # if cookies:
+        #     st.session_state["logged_in"] = True
+        #     st.session_state["username"] = cookies
+        if "logged_in" not in st.session_state:
             st.session_state["logged_in"] = False
             st.session_state["username"] = None
 
