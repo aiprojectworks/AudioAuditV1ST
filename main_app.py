@@ -48,12 +48,13 @@ from database import Session, User, seed_users
 # import extra_streamlit_components as stx
 # from streamlit.web.server.websocket_headers import _get_websocket_headers
 import threading
+import time
 from sqlalchemy.exc import IntegrityError
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 from streamlit.runtime import get_instance
 from typing import Tuple
-
-
+# import streamlit_js_eval
+# from streamlit_js_eval import streamlit_js_eval
 
 
 #testestest
@@ -70,6 +71,19 @@ from typing import Tuple
 # LiveTranscriptionEvents,
 # LiveOptions,
 # )
+
+class KillableThread(threading.Thread):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._stop_event = threading.Event()
+
+    def stop(self):
+        self._stop_event.set()
+
+    def stopped(self):
+        return self._stop_event.is_set()
+
+
 st.set_page_config(page_title="IPPFA Trancribe & Audit",
                             page_icon=":books:")
 groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
@@ -144,7 +158,7 @@ def delete_user(username: str) -> Tuple[bool, str]:
                     return False, "Cannot delete the last admin user"
                 if st.session_state.get("username") == username:
                     return False, "Cannot delete the currently logged in user"
-            cleanup_on_logout(username)
+            cleanup_on_logout(username, refresh=False)
             session.delete(user)
             session.commit()
             return True, "User deleted successfully"
@@ -276,7 +290,7 @@ def admin_interface():
         st.info("No users found")
 
 
-def cleanup_on_logout(username = st.session_state.get("username")):
+def cleanup_on_logout(username = st.session_state.get("username"), refresh = True):
     """Handle cleanup when user logs out"""
     # username = st.session_state.get("username")
     if username:
@@ -287,12 +301,84 @@ def cleanup_on_logout(username = st.session_state.get("username")):
             directory = "./" + directory
             os.rmdir(directory)
 
+    if refresh:
+        st.session_state.clear()   
 
-    st.session_state.clear()   
+def user_exists(username):
+    """Check if user exists in database"""
+    try:
+        session = Session()
+        user = session.query(User).filter_by(username=username).first()
+        return user is not None
+    except Exception as e:
+        print(f"Database error checking user existence: {e}")
+        return False
+    finally:
+        session.close()
 
-# def heartbeat(username):
-#     with open("user_activity.log", 'a') as f:
-#         f.write(f"User '{username}' active at {datetime.now()}\n")
+
+def heartbeat(username):
+    # print(f"Heartbeat for user: {username}")
+    if not user_exists(username):
+        print(f"User {username} not found. Stopping heartbeat.")
+        # Use the instance to call stop_beating
+        heartbeat_manager.active_threads[username].stop()
+        cleanup_on_logout(username, refresh=False)  
+        st.rerun()
+        st.session_state["user_deleted"] = True
+
+    
+
+class HeartbeatManager:
+    def __init__(self):
+        self.active_threads = {}
+
+    def start_beating(self, username):
+        """Start heartbeat thread"""
+        def heartbeat_loop():
+            while not self.active_threads[username].stopped():
+                # Get current session context
+                ctx = get_script_run_ctx()
+                runtime = get_instance()
+
+                if ctx and runtime.is_active_session(session_id=ctx.session_id):
+                    # Session is still active
+                    heartbeat(username)
+                    time.sleep(2)  # Wait for 2 seconds
+                else:
+                    # Session ended - clean up
+                    print(f"Session ended for user: {username}")
+                    cleanup_on_logout(username, refresh=False)
+                    return
+
+        # Create new killable thread
+        thread = KillableThread(target=heartbeat_loop)
+        
+        # Add Streamlit context to thread
+        add_script_run_ctx(thread)
+        
+        # Store thread reference
+        self.active_threads[username] = thread
+        
+        # Start thread
+        thread.start()
+
+    def stop_beating(self, username):
+        """Stop heartbeat thread for specific user"""
+        if username in self.active_threads:
+            self.active_threads[username].stop()
+            # Remove join() if called from within the thread
+            if threading.current_thread() != self.active_threads[username]:
+                self.active_threads[username].join()  # Only join if called from a different thread
+            del self.active_threads[username]
+
+    def stop_all(self):
+        for username in list(self.active_threads.keys()):
+            self.stop_beating(username)
+
+#!important
+heartbeat_manager = HeartbeatManager()
+
 
 def start_beating(username):
     """Start heartbeat thread"""
@@ -305,15 +391,16 @@ def start_beating(username):
     ctx = get_script_run_ctx()
     runtime = get_instance()
     
+    
     if ctx and runtime.is_active_session(session_id=ctx.session_id):
         # Session is still active
         thread.start()
         #!no logs
-        # heartbeat(username)
+        heartbeat(username)
     else:
         # Session ended - clean up
         print(f"Session ended for user: {username}")
-        cleanup_on_logout(username)
+        cleanup_on_logout(username, refresh=False)
         return
 
 # Authenticate function
@@ -1355,6 +1442,12 @@ def is_valid_mp3(file_path):
 
 def main():
     try:
+        if st.session_state.get("user_deleted", False):
+            st.error("Your account has been deleted. Please contact the administrator.")
+            st.session_state.clear()
+            time.sleep(1)  # Give a moment for the message to display
+            st.rerun()
+
         # cookies = controller.get("username")
         # if cookies:
         #     st.session_state["logged_in"] = True
@@ -1369,7 +1462,7 @@ def main():
         else:
             if 'heartbeat_started' not in st.session_state:
                 st.session_state.heartbeat_started = True
-                start_beating(st.session_state["username"])
+                heartbeat_manager.start_beating(st.session_state["username"])
 
             # After successful login, show the main dashboard
             st.sidebar.success(f"Logged in as: {st.session_state['username']}")
@@ -1387,6 +1480,7 @@ def main():
 
 
             if st.session_state.get('show_admin', False):
+                cleanup_on_logout(username=st.session_state["username"], refresh=False)
                 admin_interface()
                 # if st.button("Back to Transcription Service"):
                 #     st.session_state.show_admin = False
