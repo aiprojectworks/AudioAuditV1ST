@@ -707,7 +707,7 @@ def speech_to_text(audio_file):
     }
 
     Then apply these rules to determine speakers:
-            1. FIRST: Identify Speech Patterns
+        1. FIRST: Identify Speech Patterns
         Telemarketer MUST be speaker when:
         - Using "Ms./Mrs. Hamid"
         - Asking about schedule ("When is your off day?")
