@@ -1017,21 +1017,20 @@ def LLM_audit(dialog):
     The audit evaluates whether the telemarketer adhered to specific criteria during the dialogue.
 
     ### Instruction:
-        - Review the provided conversation transcript and assess the telemarketer's compliance based on the criteria outlined below. 
-        - For each criterion, provide a detailed assessment, including quoting reasons from the conversation and a result status. 
+        - Review the transcript and evaluate the telemarketer's compliance with the criteria below.
+        - Provide a detailed assessment for each criterion, quoting relevant parts of the conversation and assigning a result status.
         - Ensure all evaluations are based strictly on the content of the conversation. 
-        - Only mark a criterion as "Pass" if you are very confident (i.e., nearly certain) based on clear and specific evidence from the conversation. 
-        - Do not include words written in the brackets () as part of the criteria during the response.
-        - The meeting is always a location in Singapore, rename the location to a similar word if its not a location in Singapore.
+        - Only mark a criterion as "Pass" if there is clear evidence to support it.
+        - Rename non-Singapore locations in the conversation to a similar location in Singapore.
 
         Audit Criteria:
-            1. Did the telemarketer introduced themselves by stating their name? (Usually followed by 'calling from')
-            2. Did the telemarketer state that they are calling from one of these ['IPP', 'IPPFA', 'IPP Financial Advisors'] without mentioning on behalf of any other insurers?(accept anyone one of the 3 name given)
-            3. Did the customer asked how did the telemarketer obtained their contact details? If they asked, did telemarketer mentioned who gave the customer's details to him? (Not Applicable if customer didn't)
-            4. Did the telemarketer specify the types of financial services offered?
-            5. Did the telemarketer offered to set up a meeting or zoom session with the consultant for the customer? (Specify the date and location if possible)
-            6. Did the telemarketer stated that products have high returns, guaranteed returns, or capital guarantee? (Fail if they did, Pass if they didn't)
-            7. Was the telemarketer polite and professional in their conduct?
+            1. Did the telemarketer state their name (usually followed by "calling from". Pass if they have just said their name only.)?
+            2. Did they specify they are calling from one of these: ['IPP', 'IPPFA', 'IPP Financial Advisors'] (without mentioning other insurers)?
+            3. If asked, did they disclose who provided the customer's contact details? (NA if not asked.)
+            4. Did they specify the financial services offered?
+            5. Did they propose a meeting or Zoom session? (Provide the date and location if have.)
+            6. Did they avoid claiming high/guaranteed returns or capital guarantee? (Fail if mentioned.)
+            7. Were they polite and professional?
 
         ** End of Criteria**
 
@@ -1060,16 +1059,15 @@ def LLM_audit(dialog):
     The audit evaluates whether the telemarketer adhered to specific criteria during the dialogue.
 
     ### Instruction:
-        - Review the provided conversation transcript and assess the telemarketer's compliance based on the criteria outlined below. 
-        - For each criterion, provide a detailed assessment, including quoting reasons from the conversation and a result status. 
+        - Review the conversation transcript and evaluate compliance with the criteria below.
+        - Provide detailed assessments for each criterion, quoting evidence from the conversation and assigning a result status.
         - Ensure all evaluations are based strictly on the content of the conversation. 
-        - Only mark a criterion as "Pass" if you are very confident (i.e., nearly certain) based on clear and specific evidence from the conversation. 
-        - Do not include words written in the brackets () as part of the criteria during the response.
+        - Only mark "Pass" if clear evidence supports it. Exclude words in brackets from the criteria when responding.
 
         Audit Criteria:
-            1. Did the telemarketer ask if the customer is keen to explore how they can benefit from IPPFA's services?
-            2. Did the customer show uncertain response to the offer of the product and services? If Yes, Check did the telemarketer propose meeting or zoom session with company's consultant?
-            3. Did the telemarketer pressure the customer for the following activities (product introduction, setting an appointment)? (Fail if they did, Pass if they didn't)
+            1. Did the telemarketer ask if the customer is interested in IPPFA's services?
+            2. If the customer showed uncertainty, did the telemarketer suggest a meeting or Zoom session with a consultant?
+            3. Did the telemarketer avoid pressuring the customer (for product introduction or appointment setting)? (Fail if pressure was applied.)
 
         ** End of Criteria**
 
