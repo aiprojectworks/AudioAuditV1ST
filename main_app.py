@@ -695,7 +695,7 @@ def speech_to_text(audio_file):
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-        {"role": "system", "content": """Insert speaker labels for a telemarketer and a customer based on the dialogue. Return in a JSON format together with the original language code. Translate the entire transcript accurately into English. Ensure the segmentation is logical and each line reflects a single speaker's statement. mMaintain consistency in labeling (e.g., do not mix speaker roles). Preserve the original speaker intent and tone in the translation."""},
+        {"role": "system", "content": """Insert speaker labels for a telemarketer and a customer based on the dialogue as accurately as possible. Return in a JSON format together with the original language code. Translate the entire transcript accurately into English. Ensure the segmentation is logical and each line reflects a single speaker's statement. Maintain consistency in labeling (e.g., do not mix speaker roles). Preserve the original speaker intent and tone in the translation."""},
         {"role": "user", "content": f"The audio transcript is: {dialog}"}
         ],
         temperature=0
