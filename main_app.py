@@ -516,14 +516,52 @@ def speech_to_text_groq(audio_file):
     print(transcription.text)
     
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-        {"role": "system", "content": """Insert speaker labels for a telemarketer and a customer. Return in a JSON format together with the original language code. Always translate the transcript fully to English."""},
-        {"role": "user", "content": f"The audio transcript is: {transcription.text}"}
+    model="gpt-4o-mini",
+    messages=[
+        {"role": "system", "content": """You are processing a cold-call conversation transcript between a telemarketer and a customer. Your task is to:
+
+    1. Identify speakers based on these patterns:
+    Telemarketer typically:
+    - Asks to confirm identity ("Is this [name]?")
+    - Introduces themselves and company
+    - Explains services/products
+    - Makes offers/proposals
+    - Uses professional sales language
+    
+    Customer typically:
+    - Responds to identity confirmation
+    - Asks for clarification
+    - Responds to offers
+    - Makes decisions about proposals
+
+    2. Format output as JSON:
+    {
+        "language_code": "original audio language (e.g., 'en', 'zh', 'ms')",
+        "transcript": [
+            {
+                "speaker": "Telemarketer/Customer",
+                "text": "exact speech content"
+            }
+        ]
+    }
+
+    3. Cold-call specific rules:
+    - Initial identity confirmation is typically from telemarketer
+    - Name repetition/clarification usually from customer
+    - Service explanations always from telemarketer
+    - Confusion/clarification requests typically from customer
+
+    4. Accuracy requirements:
+    - Maintain exact names as spoken
+    - Preserve company names and terminology
+    - Keep all hesitations and repetitions
+    - Mark unclear segments with [unclear]"""},
+            {"role": "user", "content": f"Process this audio transcript: {transcription.text}"}
         ],
         temperature=0,
         max_tokens=16384
     )
+
 
     output = response.choices[0].message.content
     print(output)
@@ -542,6 +580,101 @@ def speech_to_text_groq(audio_file):
     
     return dialog, language_code
 
+
+
+# def speech_to_text(audio_file):
+#     dialog =""
+
+#     # Transcribe the audio
+#     transcription = client.audio.transcriptions.create(
+#         model="whisper-1",
+#         file=open(audio_file, "rb"),
+#         prompt="Elena Pryor, Samir, Sahil, Mihir, IPP, IPPFA",
+#         temperature=0
+
+#     )
+#     if not transcription or not transcription.text:
+#         raise ValueError("No transcription text received from Whisper API")
+
+#     dialog = transcription.text
+#     # OPTIONAL: Uncomment the line below to print the transcription
+#     # print("Transcript: ", dialog + "  \n\n")
+
+#     response = client.chat.completions.create(
+#     model="gpt-4o-mini",
+#     messages=[
+#         {"role": "system", "content": """You are analyzing a sales call transcript. Apply these EXACT rules in order:
+
+#     1. FIRST: Identify Speech Patterns
+#     Telemarketer MUST be speaker when:
+#     - Using "Ms./Mrs. Hamid"
+#     - Asking about schedule ("When is your off day?")
+#     - Making confirmation statements ending with "right?"
+#     - Explaining business/MAS
+#     - Following up on customer's answers
+    
+#     Customer MUST be speaker when:
+#     - Using "Ba" or broken English
+#     - Showing resistance ("no no", "cannot")
+#     - Expressing confusion
+#     - Making excuses about time/schedule
+#     - Using repeated words ("sorry sorry")
+
+#     2. THEN: Check Question Types
+#     Telemarketer Questions ONLY:
+#     - Schedule inquiries
+#     - Work-related questions
+#     - Family-related questions
+#     - Confirmation questions
+#     - Location questions
+    
+#     Customer Questions ONLY:
+#     - "What?"/"Pardon?"
+#     - "Who are you?"
+#     - Questions about documents
+#     - Questions showing confusion
+
+#     3. THEN: Check Response Patterns
+#     Telemarketer Responses:
+#     - Professional acknowledgments
+#     - Schedule proposals
+#     - Business explanations
+#     - Family/work inquiries
+    
+#     Customer Responses:
+#     - Short answers
+#     - Time excuses
+#     - Location excuses
+#     - Confused responses
+
+#     4. FINALLY: Verify Context
+#     - Each confirmation question ("...right?") MUST be from Telemarketer
+#     - Each statement of personal plans MUST be from Customer
+#     - Each formal address ("Ms./Mrs. Hamid") MUST be from Telemarketer
+#     - Each informal/broken English MUST be from Customer
+
+#     Double-check that attributed speakers maintain these patterns consistently."""},
+#             {"role": "user", "content": f"Process this transcript, applying rules strictly in order: {transcription.text}"}
+#         ],
+#         temperature=0,
+#         max_tokens=16384
+#     )
+    
+#     output = response.choices[0].message.content
+#     # print(output)
+#     dialog = output.replace("json", "").replace("```", "")
+#     formatted_transcript = ""
+#     dialog = json.loads(dialog)
+#     language_code = dialog["language_code"]
+#     print(language_code)
+#     for entry in dialog['transcript']:
+#         formatted_transcript += f"{entry['speaker']}: {entry['text']}  \n\n"
+#     print(formatted_transcript)
+
+#     # Joining the formatted transcript into a single string
+#     dialog = formatted_transcript
+
+#     return dialog, language_code
 
 
 def speech_to_text(audio_file):
@@ -586,83 +719,46 @@ def speech_to_text(audio_file):
 
 
 
-def groq_LLM_audit(dialog):
+def groq_LLM_audit(dialog): #*not in use
     stage_1_prompt = """
-    You are an auditor for IPP or IPPFA. 
-    You are tasked with auditing a conversation between a telemarketer from IPP or IPPFA and a customer. 
-    The audit evaluates whether the telemarketer adhered to specific criteria during the dialogue.
+    You are auditing a conversation between an IPP/IPPFA telemarketer and a potential customer.
 
-    ### Instruction:
-        - Review the provided conversation transcript and assess the telemarketer's compliance based on the criteria outlined below. 
-        - For each criterion, provide a detailed assessment, including quoting reasons from the conversation and a result status. 
-        - Ensure all evaluations are based strictly on the content of the conversation. 
-        - Only mark a criterion as "Pass" if you are very confident (i.e., nearly certain) based on clear and specific evidence from the conversation. 
-        - Do not include words written in the brackets () as part of the criteria during the response.
-        - The meeting is always a location in Singapore, rename the location to a similar word if its not a location in Singapore.
+    Evaluate these criteria with "Pass", "Fail", or "Not Applicable":
+    1. Name introduction [Pass if telemarketer states their name]
+    2. Company affiliation [Pass if mentions IPP/IPPFA/IPP Financial Advisors only]
+    3. Contact source disclosure [N/A if not asked; Pass if source explained when asked]
+    4. Financial services description [Pass if services are specified]
+    5. Meeting/zoom scheduling [Pass if offered; include date/location if mentioned]
+    6. Return claims [Pass if NO mentions of high/guaranteed returns; Fail if mentioned]
+    7. Professional conduct [Pass if consistently polite/professional]
 
-        Audit Criteria:
-            1. Did the telemarketer introduced themselves by stating their name? (Usually followed by 'calling from')
-            2. Did the telemarketer state that they are calling from one of these ['IPP', 'IPPFA', 'IPP Financial Advisors'] without mentioning on behalf of any other insurers?(accept anyone one of the 3 name given)
-            3. Did the customer asked how did the telemarketer obtained their contact details? If they asked, did telemarketer mentioned who gave the customer's details to him? (Not Applicable if customer didn't)
-            4. Did the telemarketer specify the types of financial services offered?
-            5. Did the telemarketer offered to set up a meeting or zoom session with the consultant for the customer? (Try to specify the date and location if possible)
-            6. Did the telemarketer stated that products have high returns, guaranteed returns, or capital guarantee? (Fail if they did, Pass if they didn't)
-            7. Was the telemarketer polite and professional in their conduct?
+    Format: Return a JSON array of objects with:
+    {
+        "Criteria": "criterion being checked",
+        "Reason": "specific evidence from conversation",
+        "Result": "Pass/Fail/Not Applicable"
+    }
 
-        ** End of Criteria**
-
-    ### Response:
-        Generate JSON objects for each criteria in a list that must include the following keys:
-        - "Criteria": State the criterion being evaluated.
-        - "Reason": Provide specific reasons based on the conversation.
-        - "Result": Indicate whether the criterion was met with "Pass", "Fail", or "Not Applicable".
-
-        For Example:
-            [
-                {
-                    "Criteria": "Did the telemarketer asked about the age of the customer",
-                    "Reason": "The telemarketer asked how old the customer was.",
-                    "Result": "Pass"
-                }
-            ]
-    """ 
+    Conversation to evaluate:
+    %s
+    """
 
     stage_2_prompt = """
-    You are an auditor for IPP or IPPFA. 
-    You are tasked with auditing a conversation between a telemarketer from IPP or IPPFA and a customer. 
-    The audit evaluates whether the telemarketer adhered to specific criteria during the dialogue.
+    Continuing the IPP/IPPFA telemarketing audit, evaluate:
 
-    ### Instruction:
-        - Review the provided conversation transcript and assess the telemarketer's compliance based on the criteria outlined below. 
-        - For each criterion, provide a detailed assessment, including quoting reasons from the conversation and a result status. 
-        - Ensure all evaluations are based strictly on the content of the conversation. 
-        - Only mark a criterion as "Pass" if you are very confident (i.e., nearly certain) based on clear and specific evidence from the conversation. 
-        - Do not include words written in the brackets () as part of the criteria during the response.
+    1. Service benefits [Pass if asked about customer's interest in IPPFA services]
+    2. Uncertain customer response [If yes, Pass if meeting/zoom offered; N/A if customer certain]
+    3. Pressure tactics [Pass if NO pressure for products/appointments; Fail if pressured]
 
-        Audit Criteria:
-            1. Did the telemarketer ask if the customer is keen to explore how they can benefit from IPPFA's services?
-            2. Did the customer show uncertain response to the offer of the product and services? If Yes, Check did the telemarketer propose meeting or zoom session with company's consultant?
-            3. Did the telemarketer pressure the customer for the following activities (product introduction, setting an appointment)? (Fail if they did, Pass if they didn't)
+    Format: Return a JSON array of objects with:
+    {
+        "Criteria": "criterion being checked",
+        "Reason": "specific evidence from conversation",
+        "Result": "Pass/Fail/Not Applicable"
+    }
 
-        ** End of Criteria**
-
-    ### Response:
-        Generate JSON objects for each criteria in a list that must include the following keys:
-        - "Criteria": State the criterion being evaluated.
-        - "Reason": Provide specific reasons based on the conversation.
-        - "Result": Indicate whether the criterion was met with "Pass", "Fail", or "Not Applicable".
-
-        For Example:
-            [
-                {
-                    "Criteria": "Did the telemarketer asked about the age of the customer",
-                    "Reason": "The telemarketer asked how old the customer was.",
-                    "Result": "Pass"
-                }
-            ]
-
-    ### Input:
-        %s
+    Conversation to evaluate:
+    %s
     """ % (dialog)
 
     chat_completion  = groq_client.chat.completions.create(
@@ -932,7 +1028,7 @@ def LLM_audit(dialog):
     for i in range(len(stage_1_result)):
         if stage_1_result[i]["Result"] == "Fail":
             overall_result = "Fail"
-            break  
+            break
 
     output_dict["Overall Result"] = overall_result
 
