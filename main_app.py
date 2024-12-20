@@ -692,6 +692,8 @@ def speech_to_text(audio_file):
     # OPTIONAL: Uncomment the line below to print the transcription
     # print("Transcript: ", dialog + "  \n\n")
 
+    total_tokens = 0  # Initialize total_tokens variable
+
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
@@ -701,6 +703,16 @@ def speech_to_text(audio_file):
         temperature=0
     )
 
+    
+    
+    total_tokens += response.usage.total_tokens
+    print(f"Total tokens used for transcription: {total_tokens}")
+
+    filename = os.path.basename(audio_file)
+    if filename not in st.session_state.token_counts:
+        st.session_state.token_counts[filename] = {}
+
+    st.session_state.token_counts[filename]["transcription"] = total_tokens
     output = response.choices[0].message.content
     # print(output)
     dialog = output.replace("json", "").replace("```", "")
@@ -870,6 +882,7 @@ def groq_LLM_audit(dialog): #*not in use
 
 
 def LLM_audit(dialog):
+    total_tokens = 0  # Initialize total_tokens variable
     stage_1_prompt = """
     You are an auditor for IPP or IPPFA. 
     You are tasked with auditing a conversation between a telemarketer from IPP or IPPFA and a customer. 
@@ -963,6 +976,8 @@ def LLM_audit(dialog):
     temperature=0,)
 
     # print(completion)
+    total_tokens += completion.usage.total_tokens
+    print(f"Total tokens used for audit: {total_tokens}")
 
     # extracting useful part of response
     stage_1_result = completion.choices[0].message.content
@@ -1077,6 +1092,9 @@ def LLM_audit(dialog):
     import gc
     gc.collect()
     torch.cuda.empty_cache()
+
+    current_file = list(st.session_state.token_counts.keys())[-1]
+    st.session_state.token_counts[current_file]["audit"] = total_tokens
 
     return output_dict
 
@@ -1309,6 +1327,9 @@ def main():
         # if cookies:
         #     st.session_state["logged_in"] = True
         #     st.session_state["username"] = cookies
+        # Add this with your other session state initializations
+        if 'token_counts' not in st.session_state:
+            st.session_state.token_counts = {}
         if "logged_in" not in st.session_state:
             st.session_state["logged_in"] = False
             st.session_state["username"] = None
@@ -1756,9 +1777,34 @@ def main():
                         username = st.session_state["username"]
                         directory = username
                         delete_mp3_files(directory)
+                        
                     # else:
                     #     st.error("Please specify a destination folder to save audited transcript!")
-
+                    if submit and audio_files and combined_results:
+                        st.subheader("Token Usage Summary")
+                        
+                        # Create a DataFrame for token usage
+                        token_data = []
+                        for filename, counts in st.session_state.token_counts.items():
+                            token_data.append({
+                                'Filename': filename,
+                                'Transcription Tokens': counts.get('transcription', 0),
+                                'Audit Tokens': counts.get('audit', 0),
+                                'Total Tokens': counts.get('transcription', 0) + counts.get('audit', 0)
+                            })
+                        
+                        token_df = pd.DataFrame(token_data)
+                        
+                        # Display token usage in a nice table
+                        st.dataframe(token_df.style.format({
+                            'Transcription Tokens': '{:,.0f}',
+                            'Audit Tokens': '{:,.0f}',
+                            'Total Tokens': '{:,.0f}'
+                        }))
+                        
+                        # Display grand total
+                        total_tokens = token_df['Total Tokens'].sum()
+                        st.markdown(f"**Grand Total Tokens Used: {total_tokens:,.0f}**")
 
                 st.subheader("Event Log")
                 log_container = st.container()
