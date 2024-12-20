@@ -55,10 +55,9 @@ from streamlit.runtime import get_instance
 from typing import Tuple
 # import streamlit_js_eval
 # from streamlit_js_eval import streamlit_js_eval
-
-
-#testestest
 # from pydub.playback import play
+from llmlingua import PromptCompressor
+from transformers import AutoTokenizer
 
 # import assemblyai as aai
 # import httpx
@@ -71,6 +70,7 @@ from typing import Tuple
 # LiveTranscriptionEvents,
 # LiveOptions,
 # )
+
 
 class KillableThread(threading.Thread):
     def __init__(self, *args, **kwargs):
@@ -90,10 +90,21 @@ groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 # deepgram = DeepgramClient(st.secrets["DEEPGRAM_API_KEY"])
 client = OpenAI(api_key=st.secrets["API_KEY"])
 
-# falcon = pvfalcon.create(access_key=st.secrets["PICOVOICE_API_KEY"])
+try:
+    llm_lingua = PromptCompressor(
+        model_name="microsoft/llmlingua-2-xlm-roberta-large-meetingbank",  # Using base model
+        model_config={"revision": "main"},
+        use_llmlingua2=True,
+        device_map="cpu"
+    )
+except Exception as e:
+    print(f"Error initializing LLMLingua: {e}")
 
+
+print("torch version:", torch.__version__)
 
 def is_admin(username: str) -> bool:
+
     """Check if user has admin role"""
     try:
         session = Session()
@@ -694,11 +705,28 @@ def speech_to_text(audio_file):
 
     total_tokens = 0  # Initialize total_tokens variable
 
+    system_prompt = """Insert speaker labels for a telemarketer and a customer based on the dialogue as accurately as possible. Return in a JSON format together with the original language code. Translate the entire transcript accurately into English. Ensure the segmentation is logical and each line reflects a single speaker's statement. Maintain consistency in labeling (e.g., do not mix speaker roles). Preserve the original speaker intent and tone in the translation."""
+
+    compressed_system = llm_lingua.compress_prompt(
+            system_prompt,
+            target_token=150,  # Adjust this value as needed
+            force_tokens=["JSON", "English", "speaker", "telemarketer", "customer"],
+            drop_consecutive=True,
+        )
+
+    compressed_transcript = llm_lingua.compress_prompt(
+        dialog,
+        rate=0.5,  # Adjust compression rate as needed
+        force_tokens=["!", ".", "?", "\n"],
+        drop_consecutive=True,
+    )
+
+
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-        {"role": "system", "content": """Insert speaker labels for a telemarketer and a customer based on the dialogue as accurately as possible. Return in a JSON format together with the original language code. Translate the entire transcript accurately into English. Ensure the segmentation is logical and each line reflects a single speaker's statement. Maintain consistency in labeling (e.g., do not mix speaker roles). Preserve the original speaker intent and tone in the translation."""},
-        {"role": "user", "content": f"The audio transcript is: {dialog}"}
+        {"role": "system", "content": compressed_system["compressed_prompt"]},
+        {"role": "user", "content": f"The audio transcript is: {compressed_transcript['compressed_prompt']}"}
         ],
         temperature=0
     )
@@ -714,20 +742,29 @@ def speech_to_text(audio_file):
 
     st.session_state.token_counts[filename]["transcription"] = total_tokens
     output = response.choices[0].message.content
+    
+    print("Raw output:", output)  # Let's see what we're getting
     # print(output)
-    dialog = output.replace("json", "").replace("```", "")
-    formatted_transcript = ""
-    dialog = json.loads(dialog)
-    language_code = dialog["language_code"]
-    print(language_code)
-    for entry in dialog['transcript']:
-        formatted_transcript += f"{entry['speaker']}: {entry['text']}  \n\n"
-    print(formatted_transcript)
+    # dialog = output.replace("json", "").replace("```", "")
+    try:
+        # Clean up the output and parse JSON once
+        cleaned_output = output.replace("json", "").replace("```", "").strip()
+        print("After cleanup:", cleaned_output)
+        parsed_json = json.loads(cleaned_output)
 
-    # Joining the formatted transcript into a single string
-    dialog = formatted_transcript
+        # Extract what we need from the JSON
+        language_code = parsed_json["language_code"]
+        formatted_transcript = ""
+        for entry in parsed_json['transcript']:
+            formatted_transcript += f"{entry['speaker']}: {entry['text']}  \n\n"
 
-    return dialog, language_code
+        return formatted_transcript, language_code
+
+    except json.JSONDecodeError as e:
+        print("JSON Parse Error:", e)
+        print("Failed to parse:", cleaned_output)
+        raise
+
 
 
 
@@ -884,7 +921,17 @@ def groq_LLM_audit(dialog): #*not in use
 def LLM_audit(dialog):
     total_tokens = 0  # Initialize total_tokens variable
     stage_1_prompt = """
-    You are an auditor for IPP or IPPFA. 
+    You are an auditor for IPP or IPPFA. Return ONLY a valid JSON object.
+
+    Required format:
+    [
+        {
+            "Criteria": "<criterion being evaluated>",
+            "Reason": "<specific evidence from conversation>",
+            "Result": "Pass/Fail/Not Applicable"
+        }
+    ]
+
     You are tasked with auditing a conversation between a telemarketer from IPP or IPPFA and a customer. 
     The audit evaluates whether the telemarketer adhered to specific criteria during the dialogue.
 
@@ -920,13 +967,41 @@ def LLM_audit(dialog):
                     "Result": "Pass"
                 }
             ]
-
+    IMPORTANT: 
+    - Return ONLY the JSON array
+    - No additional text before or after
+    - No explanations or summaries
+    - Ensure JSON is properly formatted
     ### Input:
         %s
     """ % (dialog)
 
+    compressed_stage1 = llm_lingua.compress_prompt(
+        stage_1_prompt,
+        target_token=500,  # Adjust as needed
+        force_tokens=["Pass", "Fail", "Not Applicable", "IPP", "IPPFA", "JSON"],
+        drop_consecutive=True,
+    )
+
+    # Compress the dialog input
+    compressed_dialog = llm_lingua.compress_prompt(
+        dialog,
+        rate=0.5,  # Adjust compression rate as needed
+        force_tokens=["!", ".", "?", "\n"],
+        drop_consecutive=True,
+    )
     stage_2_prompt = """
-    You are an auditor for IPP or IPPFA. 
+    You are an auditor for IPP or IPPFA. Return ONLY  a valid JSON obect. 
+
+    Required format:
+    [
+        {
+            "Criteria": "<criterion being evaluated>",
+            "Reason": "<specific evidence from conversation>",
+            "Result": "Pass/Fail/Not Applicable"
+        }
+    ]
+
     You are tasked with auditing a conversation between a telemarketer from IPP or IPPFA and a customer. 
     The audit evaluates whether the telemarketer adhered to specific criteria during the dialogue.
 
@@ -949,7 +1024,7 @@ def LLM_audit(dialog):
         - "Reason": Provide specific reasons based on the conversation.
         - "Result": Indicate whether the criterion was met with "Pass", "Fail", or "Not Applicable".
 
-        For Example:
+        For Example (Required JSON format):
             [
                 {
                     "Criteria": "Did the telemarketer asked about the age of the customer",
@@ -957,6 +1032,11 @@ def LLM_audit(dialog):
                     "Result": "Pass"
                 }
             ]
+    IMPORTANT: 
+    - Return ONLY the JSON object
+    - No additional text before or after the JSON
+    - No explanations or summaries
+    - Ensure the JSON is properly formatted
 
     ### Input:
         %s
@@ -967,7 +1047,7 @@ def LLM_audit(dialog):
     # model_engine = "text-davinci-003"
     model_engine ="gpt-4o-mini"
 
-    messages=[{'role':'user', 'content':f"{stage_1_prompt}"}]
+    messages=[{'role':'user', 'content':f"{compressed_stage1['compressed_prompt']} {compressed_dialog['compressed_prompt']}"}]
 
 
     completion = client.chat.completions.create(
@@ -1026,6 +1106,8 @@ def LLM_audit(dialog):
 
     stage_1_result = format_json_with_line_break(stage_1_result)
     stage_1_result = json.loads(stage_1_result)
+    if "criteria" in stage_1_result:
+        stage_1_result = stage_1_result["criteria"]
 
     output_dict = {"Stage 1": stage_1_result}
 
@@ -1050,8 +1132,14 @@ def LLM_audit(dialog):
     if output_dict["Overall Result"] == "Pass":
         del output_dict["Overall Result"]
 
-
-        messages=[{'role':'user', 'content':f"{stage_2_prompt}"}]
+        compressed_stage2 = llm_lingua.compress_prompt(
+                    stage_2_prompt,
+                    target_token=500,
+                    force_tokens=["Pass", "Fail", "Not Applicable", "IPP", "IPPFA", "JSON"],
+                    drop_consecutive=True,
+                )
+        
+        messages=[{'role':'user', 'content':f"{compressed_stage2['compressed_prompt']} {compressed_dialog['compressed_prompt']}"}]
 
         model_engine ="gpt-4o-mini"
 
@@ -1060,6 +1148,7 @@ def LLM_audit(dialog):
         messages=messages,
         temperature=0,)
 
+        
         # print(completion)
 
         # extracting useful part of response
