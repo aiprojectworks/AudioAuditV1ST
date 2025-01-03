@@ -993,14 +993,6 @@ def LLM_audit(dialog):
     stage_2_prompt = """
     You are an auditor for IPP or IPPFA. Return ONLY  a valid JSON obect. 
 
-    Required format:
-    [
-        {
-            "Criteria": "<criterion being evaluated>",
-            "Reason": "<specific evidence from conversation>",
-            "Result": "Pass/Fail/Not Applicable"
-        }
-    ]
 
     You are tasked with auditing a conversation between a telemarketer from IPP or IPPFA and a customer. 
     The audit evaluates whether the telemarketer adhered to specific criteria during the dialogue.
@@ -1047,7 +1039,7 @@ def LLM_audit(dialog):
     # model_engine = "text-davinci-003"
     model_engine ="gpt-4o-mini"
 
-    messages=[{'role':'user', 'content':f"{compressed_stage1['compressed_prompt']} {compressed_dialog['compressed_prompt']}"}]
+    messages=[{'role':'user', 'content':f"{stage_1_prompt} {compressed_dialog['compressed_prompt']}"}]
 
 
     completion = client.chat.completions.create(
@@ -1139,7 +1131,8 @@ def LLM_audit(dialog):
                     drop_consecutive=True,
                 )
         
-        messages=[{'role':'user', 'content':f"{compressed_stage2['compressed_prompt']} {compressed_dialog['compressed_prompt']}"}]
+        # messages=[{'role':'user', 'content':f"{compressed_stage2['compressed_prompt']} {compressed_dialog['compressed_prompt']}"}
+        messages=[{'role':'user', 'content':f"{stage_2_prompt} {compressed_dialog['compressed_prompt']}"}]
 
         model_engine ="gpt-4o-mini"
 
