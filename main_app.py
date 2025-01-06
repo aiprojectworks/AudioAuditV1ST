@@ -1048,13 +1048,10 @@ def LLM_audit(dialog, audio_file):
                 - Ensure all evaluations are based strictly on the content of the conversation. 
                 - Only mark "Pass" if clear evidence supports it. Exclude words in brackets from the criteria when responding.
 
-<<<<<<< HEAD
                 Audit Criteria:
                     1. Did the telemarketer ask if the customer is interested in IPPFA's services?
                     2. If the customer showed uncertainty, did the telemarketer suggest a meeting or Zoom session with a consultant?
                     3. Did the telemarketer avoid pressuring the customer (for product introduction or appointment setting)? (Fail if pressure was applied.)
-=======
->>>>>>> c754ea1981e72ee48734e1da4413d63c3605638b
 
                 ** End of Criteria**
 
@@ -1130,14 +1127,10 @@ def LLM_audit(dialog, audio_file):
 
         output_dict["Total Tokens"] = total_tokens
 
-<<<<<<< HEAD
         if filename not in st.session_state.token_counts:
             st.session_state.token_counts[filename] = {}
 
         st.session_state.token_counts[filename]["audit"] = total_tokens
-=======
-    messages=[{'role':'user', 'content':f"{stage_1_prompt} {compressed_dialog['compressed_prompt']}"}]
->>>>>>> c754ea1981e72ee48734e1da4413d63c3605638b
 
 
         return output_dict
@@ -1208,7 +1201,6 @@ def LLM_audit(dialog, audio_file):
                 person_name = ' '.join([token for token, pos in chunk.leaves()])
                 person_entities.append(person_name)
         return person_entities
-<<<<<<< HEAD
     
     def create_feedback_functions():
         def groundedness_wrapper(input_text, output_result):
@@ -1216,83 +1208,6 @@ def LLM_audit(dialog, audio_file):
                 # Convert input/output to proper format
                 input_str = str(input_text) if input_text else ""
                 output_str = str(output_result) if output_result else ""
-=======
-
-    # person_names = []
-
-
-    stage_1_result = format_json_with_line_break(stage_1_result)
-    stage_1_result = json.loads(stage_1_result)
-    if "criteria" in stage_1_result:
-        stage_1_result = stage_1_result["criteria"]
-
-    output_dict = {"Stage 1": stage_1_result}
-
-    # for k,v in output_dict.items():
-    #    person_names.append(get_person_entities(v[0]["Reason"]))
-
-    #    if len(person_names) != 0:
-            # print(person_names)
-    #        v[0]["Result"] = "Pass"
-
-    # print(output_dict)
-
-    overall_result = "Pass"
-
-    for i in range(len(stage_1_result)):
-        if stage_1_result[i]["Result"] == "Fail":
-            overall_result = "Fail"
-            break
-
-    output_dict["Overall Result"] = overall_result
-
-    if output_dict["Overall Result"] == "Pass":
-        del output_dict["Overall Result"]
-
-        compressed_stage2 = llm_lingua.compress_prompt(
-                    stage_2_prompt,
-                    target_token=500,
-                    force_tokens=["Pass", "Fail", "Not Applicable", "IPP", "IPPFA", "JSON"],
-                    drop_consecutive=True,
-                )
-        
-        # messages=[{'role':'user', 'content':f"{compressed_stage2['compressed_prompt']} {compressed_dialog['compressed_prompt']}"}
-        messages=[{'role':'user', 'content':f"{stage_2_prompt} {compressed_dialog['compressed_prompt']}"}]
-
-        model_engine ="gpt-4o-mini"
-
-        completion = client.chat.completions.create(
-        model=model_engine,
-        messages=messages,
-        temperature=0,)
-
-        
-        # print(completion)
-
-        # extracting useful part of response
-        stage_2_result = completion.choices[0].message.content
-        
-        stage_2_result = stage_2_result.replace("Audit Results:","")
-        stage_2_result = stage_2_result.replace("### Input:","")
-        stage_2_result = stage_2_result.replace("### Output:","")
-        stage_2_result = stage_2_result.replace("### Response:","")
-        stage_2_result = stage_2_result.replace("json","").replace("```","")
-        stage_2_result = stage_2_result.strip()
-
-        print(stage_2_result)
-
-        stage_2_result = format_json_with_line_break(stage_2_result)
-        stage_2_result = json.loads(stage_2_result)
-        
-        output_dict["Stage 2"] = stage_2_result
-
-        overall_result = "Pass"
-
-        for i in range(len(stage_2_result)):
-            if stage_2_result[i]["Result"] == "Fail":
-                overall_result = "Fail"
-                break  
->>>>>>> c754ea1981e72ee48734e1da4413d63c3605638b
                 
                 # Get groundedness score and reasons
                 result = openai_provider.groundedness_measure_with_cot_reasons(input_str, output_str)
