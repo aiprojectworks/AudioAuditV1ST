@@ -989,12 +989,12 @@ def LLM_audit(dialog, audio_file):
         """ % (dialog)
         
 
-        compressed_stage1 = llm_lingua.compress_prompt(
-            stage_1_prompt,
-            target_token=500,  # Adjust as needed
-            force_tokens=["Pass", "Fail", "Not Applicable", "IPP", "IPPFA", "JSON"],
-            drop_consecutive=True,
-        )
+        # compressed_stage1 = llm_lingua.compress_prompt(
+        #     stage_1_prompt,
+        #     target_token=500,  # Adjust as needed
+        #     force_tokens=["Pass", "Fail", "Not Applicable", "IPP", "IPPFA", "JSON"],
+        #     drop_consecutive=True,
+        # )
 
         # Compress the dialog input
         compressed_dialog = llm_lingua.compress_prompt(
@@ -1006,7 +1006,7 @@ def LLM_audit(dialog, audio_file):
 
         model_engine ="gpt-4o-mini"
 
-        messages=[{'role':'user', 'content':f"{compressed_stage1['compressed_prompt']} {compressed_dialog['compressed_prompt']}"}]
+        messages=[{'role':'user', 'content':f"{stage_1_prompt} {compressed_dialog['compressed_prompt']}"}]
 
 
         completion = client.chat.completions.create(
@@ -1078,12 +1078,12 @@ def LLM_audit(dialog, audio_file):
             ### Input:
                 %s
             """ % (dialog)
-            compressed_stage2 = llm_lingua.compress_prompt(
-                stage_2_prompt,
-                target_token=500,
-                force_tokens=["Pass", "Fail", "Not Applicable", "IPP", "IPPFA", "JSON"],
-                drop_consecutive=True,
-            )
+            # compressed_stage2 = llm_lingua.compress_prompt(
+            #     stage_2_prompt,
+            #     target_token=500,
+            #     force_tokens=["Pass", "Fail", "Not Applicable", "IPP", "IPPFA", "JSON"],
+            #     drop_consecutive=True,
+            # )
 
             compressed_text = llm_lingua.compress_prompt(
                 text,
@@ -1092,7 +1092,7 @@ def LLM_audit(dialog, audio_file):
                 drop_consecutive=True,
             )
 
-            messages=[{'role':'user', 'content':f"{compressed_stage2['compressed_prompt']} {compressed_text['compressed_prompt']}"}]
+            messages=[{'role':'user', 'content':f"{stage_2_prompt} {compressed_text['compressed_prompt']}"}]
 
             model_engine ="gpt-4o-mini"
 
