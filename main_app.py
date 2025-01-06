@@ -1119,11 +1119,13 @@ def LLM_audit(dialog, audio_file):
             stage_2_result = json.loads(stage_2_result)
 
             output_dict["Stage 2"] = stage_2_result
+            # print("overall result = ", determine_overall_result(output_dict))
             output_dict["Overall Result"] = determine_overall_result(output_dict)
 
             # if output_dict["Overall Result"] == "Pass":
             #     del output_dict["Overall Result"]
-
+        else: 
+            output_dict["Overall Result"] = "Fail"
 
         output_dict["Total Tokens"] = total_tokens
 
