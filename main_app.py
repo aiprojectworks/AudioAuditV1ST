@@ -1532,6 +1532,31 @@ def is_valid_mp3(file_path):
         print(f"Invalid MP3 file: {e}")
         # create_log_entry(f"Error: Invalid MP3 file: {e}")
         return False
+    
+def parse_groundedness_details(groundedness_text: str):
+    """
+    Parses the groundedness feedback string into a structured table format.
+    """
+    statements = re.split(r'STATEMENT \d+:', groundedness_text)
+    data = []
+
+    for statement in statements:
+        if statement.strip():
+            criteria_match = re.search(r'Criteria:\s*(.*?)\s*Supporting Evidence:', statement)
+            evidence_match = re.search(r'Supporting Evidence:\s*(.*?)\s*Score:', statement)
+            score_match = re.search(r'Score:\s*([\d.]+)', statement)
+            
+            criteria = criteria_match.group(1).strip() if criteria_match else "N/A"
+            evidence = evidence_match.group(1).strip() if evidence_match else "N/A"
+            score = float(score_match.group(1)) if score_match else 0.0
+            
+            data.append({
+                "Criteria": criteria,
+                "Supporting Evidence": evidence,
+                "Score": score
+            })
+
+    return pd.DataFrame(data)
 
 @st.fragment
 def display_trulens_feedback(feedback_results, unique_key):
@@ -1591,12 +1616,22 @@ def display_trulens_feedback(feedback_results, unique_key):
         
         if st.checkbox("Show Detailed Feedback", key=f"detailed_feedback_toggle_{unique_key}"):
             for metric, data in feedback_results.items():
-                if isinstance(data.get('result'), tuple) and len(data['result']) > 1:
-                    reason = data['result'][1].get('reason', 'No detailed feedback available')
-                elif isinstance(data.get('result'), dict):
-                    reason = data['result'].get('explanation', 'No detailed feedback available')
-                with st.expander(f"{metric} Details"):
-                        st.write(reason)
+                if metric == 'Groundedness':
+                    # Handle Groundedness separately for table display
+                    groundedness_details = feedback_results.get('Groundedness', {}).get('result', {}).get('explanation', '')
+                    if groundedness_details:
+                        df = parse_groundedness_details(groundedness_details)
+                        st.write("### Groundedness Details Table")
+                        st.dataframe(df)
+                    else:
+                        st.info("No groundedness details available.")
+                else:
+                    if isinstance(data.get('result'), tuple) and len(data['result']) > 1:
+                        reason = data['result'][1].get('reason', 'No detailed feedback available')
+                    elif isinstance(data.get('result'), dict):
+                        reason = data['result'].get('explanation', 'No detailed feedback available')
+                    with st.expander(f"{metric} Details"):
+                            st.write(reason)
 
     except Exception as e:
         st.error(f"Error displaying feedback metrics: {e}")
