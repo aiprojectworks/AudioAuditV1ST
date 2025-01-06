@@ -57,8 +57,14 @@ from typing import Tuple
 # from streamlit_js_eval import streamlit_js_eval
 # from pydub.playback import play
 from llmlingua import PromptCompressor
-from transformers import AutoTokenizer
 
+from trulens.core import Feedback
+from trulens.providers.openai import OpenAI as OpenAIProvider
+from trulens.apps.custom import TruCustomApp
+
+import traceback
+import numpy as np
+# from trulens_eval import feedback
 # import assemblyai as aai
 # import httpx
 # import threading
@@ -90,6 +96,9 @@ groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 # deepgram = DeepgramClient(st.secrets["DEEPGRAM_API_KEY"])
 client = OpenAI(api_key=st.secrets["API_KEY"])
 
+openai_provider = OpenAIProvider(api_key=st.secrets["API_KEY"])
+
+
 try:
     llm_lingua = PromptCompressor(
         model_name="microsoft/llmlingua-2-xlm-roberta-large-meetingbank",  # Using base model
@@ -115,6 +124,8 @@ def is_admin(username: str) -> bool:
         return False
     finally:
         session.close()
+
+
 
 def validate_password(password: str) -> Tuple[bool, str]:
     """
@@ -917,158 +928,248 @@ def groq_LLM_audit(dialog): #*not in use
     
 
 
+def LLM_audit(dialog, audio_file):
+    def audit_function(text):
+        total_tokens = 0  # Initialize total_tokens variable
+        filename = os.path.basename(audio_file)
+        stage_1_prompt = """
+        You are an auditor for IPP or IPPFA. Return ONLY a valid JSON object.
 
-def LLM_audit(dialog):
-    total_tokens = 0  # Initialize total_tokens variable
-    stage_1_prompt = """
-    You are an auditor for IPP or IPPFA. Return ONLY a valid JSON object.
+        Required format:
+        [
+            {
+                "Criteria": "<criterion being evaluated>",
+                "Reason": "<specific evidence from conversation>",
+                "Result": "Pass/Fail/Not Applicable"
+            }
+        ]
 
-    Required format:
-    [
-        {
-            "Criteria": "<criterion being evaluated>",
-            "Reason": "<specific evidence from conversation>",
-            "Result": "Pass/Fail/Not Applicable"
-        }
-    ]
+        You are tasked with auditing a conversation between a telemarketer from IPP or IPPFA and a customer. 
+        The audit evaluates whether the telemarketer adhered to specific criteria during the dialogue.
 
-    You are tasked with auditing a conversation between a telemarketer from IPP or IPPFA and a customer. 
-    The audit evaluates whether the telemarketer adhered to specific criteria during the dialogue.
+        ### Instruction:
+            - Review the transcript and evaluate the telemarketer's compliance with the criteria below.
+            - Provide a detailed assessment for each criterion, quoting relevant parts of the conversation and assigning a result status.
+            - Ensure all evaluations are based strictly on the content of the conversation. 
+            - Only mark a criterion as "Pass" if there is clear evidence to support it.
+            - Rename non-Singapore locations in the conversation to a similar location in Singapore.
 
-    ### Instruction:
-        - Review the transcript and evaluate the telemarketer's compliance with the criteria below.
-        - Provide a detailed assessment for each criterion, quoting relevant parts of the conversation and assigning a result status.
-        - Ensure all evaluations are based strictly on the content of the conversation. 
-        - Only mark a criterion as "Pass" if there is clear evidence to support it.
-        - Rename non-Singapore locations in the conversation to a similar location in Singapore.
+            Audit Criteria:
+                1. Did the telemarketer state their name (usually followed by "calling from". Pass if they have just said their name only.)?
+                2. Did they specify they are calling from one of these: ['IPP', 'IPPFA', 'IPP Financial Advisors'] (without mentioning other insurers)?
+                3. If asked, did they disclose who provided the customer's contact details? (NA if not asked.)
+                4. Did they specify the financial services offered?
+                5. Did they propose a meeting or Zoom session? (Provide the date and location if have.)
+                6. Did they avoid claiming high/guaranteed returns or capital guarantee? (Fail if mentioned.)
+                7. Were they polite and professional?
 
-        Audit Criteria:
-            1. Did the telemarketer state their name (usually followed by "calling from". Pass if they have just said their name only.)?
-            2. Did they specify they are calling from one of these: ['IPP', 'IPPFA', 'IPP Financial Advisors'] (without mentioning other insurers)?
-            3. If asked, did they disclose who provided the customer's contact details? (NA if not asked.)
-            4. Did they specify the financial services offered?
-            5. Did they propose a meeting or Zoom session? (Provide the date and location if have.)
-            6. Did they avoid claiming high/guaranteed returns or capital guarantee? (Fail if mentioned.)
-            7. Were they polite and professional?
+            ** End of Criteria**
 
-        ** End of Criteria**
+        ### Response:
+            Generate JSON objects for each criteria in a list that must include the following keys:
+            - "Criteria": State the criterion being evaluated.
+            - "Reason": Provide specific reasons based on the conversation.
+            - "Result": Indicate whether the criterion was met with "Pass", "Fail", or "Not Applicable".
 
-    ### Response:
-        Generate JSON objects for each criteria in a list that must include the following keys:
-        - "Criteria": State the criterion being evaluated.
-        - "Reason": Provide specific reasons based on the conversation.
-        - "Result": Indicate whether the criterion was met with "Pass", "Fail", or "Not Applicable".
+            For Example:
+                [
+                    {
+                        "Criteria": "Did the telemarketer asked about the age of the customer",
+                        "Reason": "The telemarketer asked how old the customer was.",
+                        "Result": "Pass"
+                    }
+                ]
+        IMPORTANT: 
+        - Return ONLY the JSON array
+        - No additional text before or after
+        - No explanations or summaries
+        - Ensure JSON is properly formatted
+        ### Input:
+            %s
+        """ % (dialog)
+        
 
-        For Example:
+        compressed_stage1 = llm_lingua.compress_prompt(
+            stage_1_prompt,
+            target_token=500,  # Adjust as needed
+            force_tokens=["Pass", "Fail", "Not Applicable", "IPP", "IPPFA", "JSON"],
+            drop_consecutive=True,
+        )
+
+        # Compress the dialog input
+        compressed_dialog = llm_lingua.compress_prompt(
+            dialog,
+            rate=0.5,  # Adjust compression rate as needed
+            force_tokens=["!", ".", "?", "\n"],
+            drop_consecutive=True,
+        )
+
+        model_engine ="gpt-4o-mini"
+
+        messages=[{'role':'user', 'content':f"{compressed_stage1['compressed_prompt']} {compressed_dialog['compressed_prompt']}"}]
+
+
+        completion = client.chat.completions.create(
+        model=model_engine,
+        messages=messages,
+        temperature=0,)
+
+        total_tokens += completion.usage.total_tokens
+        print(f"Total tokens used for audit: {total_tokens}")
+
+        stage_1_result = completion.choices[0].message.content
+
+        stage_1_result = process_stage_1(stage_1_result)
+
+        print(stage_1_result)
+
+
+        output_dict = {"Stage 1": stage_1_result}
+
+        if determine_pass_fail(stage_1_result) == "Pass":
+            stage_2_prompt = """
+            You are an auditor for IPP or IPPFA. Return ONLY  a valid JSON obect. 
+
+            Required format:
             [
                 {
-                    "Criteria": "Did the telemarketer asked about the age of the customer",
-                    "Reason": "The telemarketer asked how old the customer was.",
-                    "Result": "Pass"
+                    "Criteria": "<criterion being evaluated>",
+                    "Reason": "<specific evidence from conversation>",
+                    "Result": "Pass/Fail/Not Applicable"
                 }
             ]
-    IMPORTANT: 
-    - Return ONLY the JSON array
-    - No additional text before or after
-    - No explanations or summaries
-    - Ensure JSON is properly formatted
-    ### Input:
-        %s
-    """ % (dialog)
 
-    compressed_stage1 = llm_lingua.compress_prompt(
-        stage_1_prompt,
-        target_token=500,  # Adjust as needed
-        force_tokens=["Pass", "Fail", "Not Applicable", "IPP", "IPPFA", "JSON"],
-        drop_consecutive=True,
-    )
+            You are tasked with auditing a conversation between a telemarketer from IPP or IPPFA and a customer. 
+            The audit evaluates whether the telemarketer adhered to specific criteria during the dialogue.
 
-    # Compress the dialog input
-    compressed_dialog = llm_lingua.compress_prompt(
-        dialog,
-        rate=0.5,  # Adjust compression rate as needed
-        force_tokens=["!", ".", "?", "\n"],
-        drop_consecutive=True,
-    )
-    stage_2_prompt = """
-    You are an auditor for IPP or IPPFA. Return ONLY  a valid JSON obect. 
+            ### Instruction:
+                - Review the conversation transcript and evaluate compliance with the criteria below.
+                - Provide detailed assessments for each criterion, quoting evidence from the conversation and assigning a result status.
+                - Ensure all evaluations are based strictly on the content of the conversation. 
+                - Only mark "Pass" if clear evidence supports it. Exclude words in brackets from the criteria when responding.
 
-    Required format:
-    [
-        {
-            "Criteria": "<criterion being evaluated>",
-            "Reason": "<specific evidence from conversation>",
-            "Result": "Pass/Fail/Not Applicable"
-        }
-    ]
+                Audit Criteria:
+                    1. Did the telemarketer ask if the customer is interested in IPPFA's services?
+                    2. If the customer showed uncertainty, did the telemarketer suggest a meeting or Zoom session with a consultant?
+                    3. Did the telemarketer avoid pressuring the customer (for product introduction or appointment setting)? (Fail if pressure was applied.)
 
-    You are tasked with auditing a conversation between a telemarketer from IPP or IPPFA and a customer. 
-    The audit evaluates whether the telemarketer adhered to specific criteria during the dialogue.
+                ** End of Criteria**
 
-    ### Instruction:
-        - Review the conversation transcript and evaluate compliance with the criteria below.
-        - Provide detailed assessments for each criterion, quoting evidence from the conversation and assigning a result status.
-        - Ensure all evaluations are based strictly on the content of the conversation. 
-        - Only mark "Pass" if clear evidence supports it. Exclude words in brackets from the criteria when responding.
+            ### Response:
+                Generate JSON objects for each criteria in a list that must include the following keys:
+                - "Criteria": State the criterion being evaluated.
+                - "Reason": Provide specific reasons based on the conversation.
+                - "Result": Indicate whether the criterion was met with "Pass", "Fail", or "Not Applicable".
 
-        Audit Criteria:
-            1. Did the telemarketer ask if the customer is interested in IPPFA's services?
-            2. If the customer showed uncertainty, did the telemarketer suggest a meeting or Zoom session with a consultant?
-            3. Did the telemarketer avoid pressuring the customer (for product introduction or appointment setting)? (Fail if pressure was applied.)
+                For Example (Required JSON format):
+                    [
+                        {
+                            "Criteria": "Did the telemarketer asked about the age of the customer",
+                            "Reason": "The telemarketer asked how old the customer was.",
+                            "Result": "Pass"
+                        }
+                    ]
+            IMPORTANT: 
+            - Return ONLY the JSON object
+            - No additional text before or after the JSON
+            - No explanations or summaries
+            - Ensure the JSON is properly formatted
 
-        ** End of Criteria**
+            ### Input:
+                %s
+            """ % (dialog)
+            compressed_stage2 = llm_lingua.compress_prompt(
+                stage_2_prompt,
+                target_token=500,
+                force_tokens=["Pass", "Fail", "Not Applicable", "IPP", "IPPFA", "JSON"],
+                drop_consecutive=True,
+            )
 
-    ### Response:
-        Generate JSON objects for each criteria in a list that must include the following keys:
-        - "Criteria": State the criterion being evaluated.
-        - "Reason": Provide specific reasons based on the conversation.
-        - "Result": Indicate whether the criterion was met with "Pass", "Fail", or "Not Applicable".
+            compressed_text = llm_lingua.compress_prompt(
+                text,
+                rate=0.5,
+                force_tokens=["!", ".", "?", "\n"],
+                drop_consecutive=True,
+            )
 
-        For Example (Required JSON format):
-            [
-                {
-                    "Criteria": "Did the telemarketer asked about the age of the customer",
-                    "Reason": "The telemarketer asked how old the customer was.",
-                    "Result": "Pass"
-                }
-            ]
-    IMPORTANT: 
-    - Return ONLY the JSON object
-    - No additional text before or after the JSON
-    - No explanations or summaries
-    - Ensure the JSON is properly formatted
+            messages=[{'role':'user', 'content':f"{compressed_stage2['compressed_prompt']} {compressed_text['compressed_prompt']}"}]
 
-    ### Input:
-        %s
-    """ % (dialog)
+            model_engine ="gpt-4o-mini"
+
+            completion = client.chat.completions.create(
+                model=model_engine,
+                messages=messages,
+                temperature=0,
+            )
+
+            total_tokens += completion.usage.total_tokens
+
+            stage_2_result = completion.choices[0].message.content
+            
+            stage_2_result = stage_2_result.replace("Audit Results:","")
+            stage_2_result = stage_2_result.replace("### Input:","")
+            stage_2_result = stage_2_result.replace("### Output:","")
+            stage_2_result = stage_2_result.replace("### Response:","")
+            stage_2_result = stage_2_result.replace("json","").replace("```","")
+            stage_2_result = stage_2_result.strip()
+
+            print(stage_2_result)
+
+            stage_2_result = format_json_with_line_break(stage_2_result)
+            stage_2_result = json.loads(stage_2_result)
+
+            output_dict["Stage 2"] = stage_2_result
+            output_dict["Overall Result"] = determine_overall_result(output_dict)
+
+            # if output_dict["Overall Result"] == "Pass":
+            #     del output_dict["Overall Result"]
 
 
-    # Set up the model and prompt
-    # model_engine = "text-davinci-003"
-    model_engine ="gpt-4o-mini"
+        output_dict["Total Tokens"] = total_tokens
 
-    messages=[{'role':'user', 'content':f"{compressed_stage1['compressed_prompt']} {compressed_dialog['compressed_prompt']}"}]
+        if filename not in st.session_state.token_counts:
+            st.session_state.token_counts[filename] = {}
+
+        st.session_state.token_counts[filename]["audit"] = total_tokens
 
 
-    completion = client.chat.completions.create(
-    model=model_engine,
-    messages=messages,
-    temperature=0,)
+        return output_dict
 
-    # print(completion)
-    total_tokens += completion.usage.total_tokens
-    print(f"Total tokens used for audit: {total_tokens}")
 
-    # extracting useful part of response
-    stage_1_result = completion.choices[0].message.content
-    stage_1_result = stage_1_result.replace("Audit Results:","")
-    stage_1_result = stage_1_result.replace("### Input:","")
-    stage_1_result = stage_1_result.replace("### Output:","")
-    stage_1_result = stage_1_result.replace("### Response:","")
-    stage_1_result = stage_1_result.replace("json","").replace("```","")
-    stage_1_result = stage_1_result.strip()
 
-    print(stage_1_result)
+    def determine_pass_fail(result):
+        for item in result:
+            if item["Result"] == "Fail":
+                return "Fail"
+        return "Pass"
+    
+    def determine_overall_result(output_dict):
+        if "Stage 2" in output_dict:
+            for item in output_dict["Stage 2"]:
+                if item["Result"] == "Fail":
+                    return "Fail"
+        return "Pass"
+
+    def process_stage_1(content):
+    # Clean up the string
+        content = content.replace("Audit Results:", "")
+        content = content.replace("### Input:", "")
+        content = content.replace("### Output:", "")
+        content = content.replace("### Response:", "")
+        content = content.replace("json", "").replace("```", "")
+        content = content.strip()
+        
+        # Parse JSON once - this gives us the list of dictionaries
+        content = format_json_with_line_break(content)
+        content = json.loads(content)
+        
+        # Handle case where content might be wrapped in criteria key
+        if isinstance(content, dict) and "criteria" in content:
+            content = content["criteria"]
+            
+        # Return the full list of criteria
+        return content
+
 
     def format_json_with_line_break(json_string):
         # Step 1: Add missing commas after "Criteria" and "Reason" key-value pairs
@@ -1100,92 +1201,119 @@ def LLM_audit(dialog):
                 person_name = ' '.join([token for token, pos in chunk.leaves()])
                 person_entities.append(person_name)
         return person_entities
-
-    # person_names = []
-
-
-    stage_1_result = format_json_with_line_break(stage_1_result)
-    stage_1_result = json.loads(stage_1_result)
-    if "criteria" in stage_1_result:
-        stage_1_result = stage_1_result["criteria"]
-
-    output_dict = {"Stage 1": stage_1_result}
-
-    # for k,v in output_dict.items():
-    #    person_names.append(get_person_entities(v[0]["Reason"]))
-
-    #    if len(person_names) != 0:
-            # print(person_names)
-    #        v[0]["Result"] = "Pass"
-
-    # print(output_dict)
-
-    overall_result = "Pass"
-
-    for i in range(len(stage_1_result)):
-        if stage_1_result[i]["Result"] == "Fail":
-            overall_result = "Fail"
-            break
-
-    output_dict["Overall Result"] = overall_result
-
-    if output_dict["Overall Result"] == "Pass":
-        del output_dict["Overall Result"]
-
-        compressed_stage2 = llm_lingua.compress_prompt(
-                    stage_2_prompt,
-                    target_token=500,
-                    force_tokens=["Pass", "Fail", "Not Applicable", "IPP", "IPPFA", "JSON"],
-                    drop_consecutive=True,
-                )
-        
-        messages=[{'role':'user', 'content':f"{compressed_stage2['compressed_prompt']} {compressed_dialog['compressed_prompt']}"}]
-
-        model_engine ="gpt-4o-mini"
-
-        completion = client.chat.completions.create(
-        model=model_engine,
-        messages=messages,
-        temperature=0,)
-
-        
-        # print(completion)
-
-        # extracting useful part of response
-        stage_2_result = completion.choices[0].message.content
-        
-        stage_2_result = stage_2_result.replace("Audit Results:","")
-        stage_2_result = stage_2_result.replace("### Input:","")
-        stage_2_result = stage_2_result.replace("### Output:","")
-        stage_2_result = stage_2_result.replace("### Response:","")
-        stage_2_result = stage_2_result.replace("json","").replace("```","")
-        stage_2_result = stage_2_result.strip()
-
-        print(stage_2_result)
-
-        stage_2_result = format_json_with_line_break(stage_2_result)
-        stage_2_result = json.loads(stage_2_result)
-        
-        output_dict["Stage 2"] = stage_2_result
-
-        overall_result = "Pass"
-
-        for i in range(len(stage_2_result)):
-            if stage_2_result[i]["Result"] == "Fail":
-                overall_result = "Fail"
-                break  
+    
+    def create_feedback_functions():
+        def groundedness_wrapper(input_text, output_result):
+            try:
+                # Convert input/output to proper format
+                input_str = str(input_text) if input_text else ""
+                output_str = str(output_result) if output_result else ""
                 
-        output_dict["Overall Result"] = overall_result
+                # Get groundedness score and reasons
+                result = openai_provider.groundedness_measure_with_cot_reasons(input_str, output_str)
+                print("Groundedness Result (from openai):", result)
 
-    print(output_dict)
+                # Extract score and explanation
+                if isinstance(result, tuple):
+                    score, reasoning = result
+                    # Format the reasoning for display
+                    detailed_feedback = reasoning.get('reasons', 'No detailed feedback available')
+                    return {
+                        'result': score,
+                        'explanation': detailed_feedback
+                    }
+                return {
+                    'result': result["result"],
+                    'explanation': result["explanation"]
+                }
+            except Exception as e:
+                print(f"Groundedness Error: {e}")
+                return {
+                    'result': 0.0,
+                    'explanation': f"Error calculating groundedness: {str(e)}"
+                }
+
+        # For groundedness
+        f_groundedness = (
+        Feedback(groundedness_wrapper, name="Groundedness")
+        .on_input_output()
+        )
+
+        # For answer relevance between question and response
+        f_answer_relevance = (
+        Feedback(openai_provider.relevance_with_cot_reasons, name="Answer Relevance")
+        .on_input_output()
+        )
+
+        # For context relevance
+        f_context_relevance = (
+        Feedback(openai_provider.context_relevance_with_cot_reasons, name="Context Relevance")
+        .on_input_output()
+        .aggregate(np.mean)
+        )
+
+        return [f_groundedness, f_answer_relevance, f_context_relevance]
+
+
+
+    feedback_functions = create_feedback_functions()
+    print("Feedback Functions:", feedback_functions)
+    
+
+    recorder = TruCustomApp(
+            app=audit_function,
+            app_id="IPP_Audit_App",
+            feedbacks=feedback_functions
+        )
+    try:
+        with recorder as recording:
+            result = audit_function(dialog)
+            
+            # Collect feedback results
+            feedback_results = {}
+            for feedback in feedback_functions:
+                try:
+                    result_value = feedback(dialog, result)
+                    feedback_results[feedback.name] = {
+                        'result': result_value,
+                        # You can add more details if needed
+                    }
+                except Exception as e:
+                    print(f"Error processing feedback {feedback.name}: {e}")
+            
+            print("Collected Feedback Results:", feedback_results)
+            
+            return result, feedback_results
+    except Exception as e:
+        print(f"Error in LLM_audit: {e}")
+        return result, {}
+
+    # with recorder as recording:
+    #     result = audit_function(dialog)
+    #     print("Recording Calls:", recording.calls)
+    #     print("Recording Records:", recording.records)
+
+    #     # current_file = list(st.session_state.token_counts.keys())[-1] #honestly dunno which one is the correct one lmao
+
+    #     return result, recording
+    
+    # sample_input = "This is a test input."
+    # sample_output = audit_function(sample_input)
+
+    # for feedback in feedback_functions:
+    #     feedback_result = feedback(sample_input, sample_output)
+    #     print(f"Feedback Result for {feedback.name}: {feedback_result}")
+
     import gc
     gc.collect()
     torch.cuda.empty_cache()
+    # current_file = list(st.session_state.token_counts.keys())[-1]
 
-    current_file = list(st.session_state.token_counts.keys())[-1]
-    st.session_state.token_counts[current_file]["audit"] = total_tokens
 
-    return output_dict
+
+    return result, recording #!i dont think this is used
+
+        
 
 
 
@@ -1402,7 +1530,75 @@ def is_valid_mp3(file_path):
         print(f"Invalid MP3 file: {e}")
         # create_log_entry(f"Error: Invalid MP3 file: {e}")
         return False
-    
+
+@st.fragment
+def display_trulens_feedback(feedback_results, unique_key):
+    st.subheader("Audit Quality Metrics")
+
+    try:
+        # Print the feedback results to understand its structure
+        print("Feedback Results:", feedback_results)
+
+        # Check if feedback results are available
+        if not feedback_results:
+            st.warning("No feedback metrics available.")
+            return
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            try:
+                groundedness = feedback_results.get('Groundedness', {}).get('result', 0.0)
+                # If groundedness is a tuple, extract the first value
+                if isinstance(groundedness, tuple):
+                    groundedness = groundedness[0]
+                print("Groundedness Score:", groundedness)
+                st.metric(
+                    label="Groundedness",
+                    value=f"{groundedness['result']:.2%}"
+                )
+            except Exception as e:
+                st.metric(label="Groundedness", value="N/A")
+                print(f"Error processing groundedness: {e}")
+
+        with col2:
+            try:
+                answer_relevance = feedback_results.get('Answer Relevance', {}).get('result', 0.0)
+                if isinstance(answer_relevance, tuple):
+                    answer_relevance = answer_relevance[0]
+                st.metric(
+                    label="Answer Relevance",
+                    value=f"{float(answer_relevance):.2%}"
+                )
+            except Exception as e:
+                st.metric(label="Answer Relevance", value="N/A")
+                print(f"Error processing answer relevance: {e}")
+
+        with col3:
+            try:
+                context_relevance = feedback_results.get('Context Relevance', {}).get('result', 0.0)
+                if isinstance(context_relevance, tuple):
+                    context_relevance = context_relevance[0]
+                st.metric(
+                    label="Context Relevance",
+                    value=f"{float(context_relevance):.2%}"
+                )
+            except Exception as e:
+                st.metric(label="Context Relevance", value="N/A")
+                print(f"Error processing context relevance: {e}")
+        
+        if st.checkbox("Show Detailed Feedback", key=f"detailed_feedback_toggle_{unique_key}"):
+            for metric, data in feedback_results.items():
+                if isinstance(data.get('result'), tuple) and len(data['result']) > 1:
+                    reason = data['result'][1].get('reason', 'No detailed feedback available')
+                elif isinstance(data.get('result'), dict):
+                    reason = data['result'].get('explanation', 'No detailed feedback available')
+                with st.expander(f"{metric} Details"):
+                        st.write(reason)
+
+    except Exception as e:
+        st.error(f"Error displaying feedback metrics: {e}")
+        print(f"Full error details: {traceback.format_exc()}")
 
 def main():
     try:
@@ -1711,7 +1907,11 @@ def main():
                                     if transcribe_option == "OpenAI (Recommended)":   
                                         text, language_code = speech_to_text(audio_file)
                                         if audit_option == "OpenAI (Recommended)":
-                                            result = LLM_audit(text)
+                                            result, feedback_results = LLM_audit(text, audio_file)
+                                            print("result of audit: ",result)
+
+                                            display_trulens_feedback(feedback_results, unique_key=audio_file[2:])
+
                                             if result["Overall Result"] == "Fail":
                                                 status = "<span style='color: red;'> (FAIL)</span>"
                                             else:
@@ -1722,10 +1922,10 @@ def main():
                                                 status = "<span style='color: red;'> (FAIL)</span>"
                                             else:
                                                 status = "<span style='color: green;'> (PASS)</span>"
-                                    elif transcribe_option == "Groq":
+                                    elif transcribe_option == "Groq": #!not in use
                                         text, language_code = speech_to_text_groq(audio_file)
                                         if audit_option == "OpenAI (Recommended)":
-                                            result = LLM_audit(text)
+                                            result = LLM_audit(text, audio_file)
                                             if result["Overall Result"] == "Fail":
                                                 status = "<span style='color: red;'> (FAIL)</span>"
                                             else:
