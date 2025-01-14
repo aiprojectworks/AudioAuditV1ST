@@ -40,7 +40,7 @@ from mutagen.id3 import ID3, ID3NoHeaderError
 from pydub import AudioSegment
 import zipfile
 import io
-from database import Session, User, seed_users
+from database import Session, User, seed_users, generate_totp_secret
 # from streamlit_cookies_manager import EncryptedCookieManager
 # from streamlit_cookies_controller import CookieController
 # from streamlit.web.server.websocket_headers import _get_websocket_headers 
@@ -62,8 +62,18 @@ from trulens.core import Feedback
 from trulens.providers.openai import OpenAI as OpenAIProvider
 from trulens.apps.custom import TruCustomApp
 
+import smtplib
 import traceback
 import numpy as np
+import pyotp
+import qrcode
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from datetime import datetime, timedelta
+from sqlalchemy import Column, String, DateTime
+from database import Base, Session
+import random
+
 # from trulens_eval import feedback
 # import assemblyai as aai
 # import httpx
@@ -250,25 +260,42 @@ def admin_interface():
     
     # Add New User Section
     st.subheader("Add New User")
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
         new_username = st.text_input("Username", key="new_username")
-    with col2:
         new_password = st.text_input("Password", type="password", key="new_password")
-    with col3:
         new_role = st.selectbox("Role", ["user", "admin"], key="new_role")
+    with col2:
+        new_email = st.text_input("Email", key="new_email")
+        enable_2fa = st.checkbox("Enable 2FA", key="enable_2fa")
     
     if st.button("Add User"):
-        if new_username and new_password:
-            success, message = add_user(new_username, new_password, new_role)
+        if new_username and new_password and new_email:
+            # Generate TOTP secret if 2FA is enabled
+            totp_secret = generate_totp_secret() if enable_2fa else None
+            
+            success, message = add_user(
+                username=new_username,
+                password=new_password,
+                role=new_role,
+                email=new_email,
+                totp_secret=totp_secret
+            )
+            
             if success:
                 st.success(message)
+                if enable_2fa:
+                    # Display TOTP QR code and secret for initial setup
+                    totp = pyotp.TOTP(totp_secret)
+                    qr_code = qrcode.make(totp.provisioning_uri(new_email, issuer_name="Your App Name"))
+                    st.image(qr_code, caption="Scan this QR code with Google Authenticator")
+                    st.code(totp_secret, language=None)
                 create_log_entry(f"Admin Action: Added new user - {new_username}")
             else:
                 st.error(message)
                 create_log_entry(f"Admin Action Failed: Add user - {new_username} - {message}")
         else:
-            st.warning("Please fill in all fields")
+            st.warning("Please fill in all required fields")
 
     # Manage Existing Users Section
     st.subheader("Manage Users")
@@ -277,33 +304,101 @@ def admin_interface():
     if users:
         for user in users:
             with st.expander(f"User: {user['username']} ({user['role']})"):
-                col1, col2, col3 = st.columns(3)
+                tab1, tab2, tab3 = st.tabs(["Account", "Security", "2FA"])
                 
-                with col1:
-                    new_pass = st.text_input("New Password", type="password", key=f"pass_{user['username']}")
-                    if st.button("Change Password", key=f"btn_pass_{user['username']}"):
-                        if new_pass:
-                            success, message = change_password(user['username'], new_pass)
+                # Tab 1: Account Management
+                with tab1:
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        new_role = st.selectbox("New Role", ["user", "admin"], 
+                                              index=0 if user['role']=="user" else 1,
+                                              key=f"role_{user['username']}")
+                        if st.button("Change Role", key=f"btn_role_{user['username']}"):
+                            success, message = change_role(user['username'], new_role)
                             if success:
                                 st.success(message)
-                                create_log_entry(f"Admin Action: Changed password for user - {user['username']}")
+                                create_log_entry(f"Admin Action: Changed role for user - {user['username']} to {new_role}")
+                            else:
+                                st.error(message)
+                    
+                    with col2:
+                        new_email = st.text_input("New Email", 
+                                                value=user.get('email', ''),
+                                                key=f"email_{user['username']}")
+                        if st.button("Update Email", key=f"btn_email_{user['username']}"):
+                            success, message = update_user_email(user['username'], new_email)
+                            if success:
+                                st.success(message)
+                                create_log_entry(f"Admin Action: Updated email for user - {user['username']}")
                             else:
                                 st.error(message)
                 
-                with col2:
-                    new_role = st.selectbox("New Role", ["user", "admin"], 
-                                          index=0 if user['role']=="user" else 1,
-                                          key=f"role_{user['username']}")
-                    if st.button("Change Role", key=f"btn_role_{user['username']}"):
-                        success, message = change_role(user['username'], new_role)
-                        if success:
-                            st.success(message)
-                            create_log_entry(f"Admin Action: Changed role for user - {user['username']} to {new_role}")
-                        else:
-                            st.error(message)
+                # Tab 2: Security Management
+                with tab2:
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        new_pass = st.text_input("New Password", 
+                                               type="password",
+                                               key=f"pass_{user['username']}")
+                        if st.button("Change Password", key=f"btn_pass_{user['username']}"):
+                            if new_pass:
+                                success, message = change_password(user['username'], new_pass)
+                                if success:
+                                    st.success(message)
+                                    create_log_entry(f"Admin Action: Changed password for user - {user['username']}")
+                                else:
+                                    st.error(message)
+                    
+                    with col2:
+                        if st.button("Reset 2FA", key=f"btn_reset_2fa_{user['username']}"):
+                            success, message = reset_user_2fa(user['username'])
+                            if success:
+                                st.success("2FA has been reset. New QR code generated.")
+                                create_log_entry(f"Admin Action: Reset 2FA for user - {user['username']}")
+                                # Show new QR code
+                                totp_secret = get_user_totp_secret(user['username'])
+                                if totp_secret:
+                                    totp = pyotp.TOTP(totp_secret)
+                                    qr_code = qrcode.make(totp.provisioning_uri(user['email'], issuer_name="Your App Name"))
+                                    st.image(qr_code, caption="New 2FA QR Code")
+                                    st.code(totp_secret, language=None)
+                            else:
+                                st.error(message)
                 
-                with col3:
-                    if st.button("Delete User", key=f"btn_del_{user['username']}"):
+                # Tab 3: 2FA Status
+                with tab3:
+                    has_2fa = check_user_2fa_status(user['username'])
+                    st.write(f"2FA Status: {'Enabled' if has_2fa else 'Disabled'}")
+                    
+                    if has_2fa:
+                        if st.button("Disable 2FA", key=f"btn_disable_2fa_{user['username']}"):
+                            success, message = disable_user_2fa(user['username'])
+                            if success:
+                                st.success("2FA has been disabled")
+                                create_log_entry(f"Admin Action: Disabled 2FA for user - {user['username']}")
+                                st.rerun()
+                            else:
+                                st.error(message)
+                    else:
+                        if st.button("Enable 2FA", key=f"btn_enable_2fa_{user['username']}"):
+                            success, message = enable_user_2fa(user['username'])
+                            if success:
+                                st.success("2FA has been enabled. Scan the QR code below.")
+                                create_log_entry(f"Admin Action: Enabled 2FA for user - {user['username']}")
+                                # Show QR code
+                                totp_secret = get_user_totp_secret(user['username'])
+                                if totp_secret:
+                                    totp = pyotp.TOTP(totp_secret)
+                                    qr_code = qrcode.make(totp.provisioning_uri(user['email'], issuer_name="Your App Name"))
+                                    st.image(qr_code, caption="2FA QR Code")
+                                    st.code(totp_secret, language=None)
+                                st.rerun()
+                            else:
+                                st.error(message)
+                
+                # Delete User Button (outside tabs)
+                if st.button("Delete User", key=f"btn_del_{user['username']}", type="secondary"):
+                    if st.button("Confirm Delete", key=f"btn_confirm_del_{user['username']}", type="primary"):
                         success, message = delete_user(user['username'])
                         if success:
                             st.success(message)
@@ -313,6 +408,305 @@ def admin_interface():
                             st.error(message)
     else:
         st.info("No users found")
+
+def check_user_2fa_status(username):
+    """Check if user has 2FA enabled"""
+    try:
+        session = Session()
+        user = session.query(User).filter_by(username=username).first()
+        return user is not None and user.totp_secret is not None
+    except Exception as e:
+        print(f"Error checking 2FA status: {e}")
+        return False
+    finally:
+        session.close()
+
+def enable_user_2fa(username):
+    """Enable 2FA for a user"""
+    try:
+        session = Session()
+        user = session.query(User).filter_by(username=username).first()
+        if user:
+            user.totp_secret = generate_totp_secret()
+            session.commit()
+            return True, "2FA enabled successfully"
+        return False, "User not found"
+    except Exception as e:
+        session.rollback()
+        return False, f"Error enabling 2FA: {e}"
+    finally:
+        session.close()
+
+def disable_user_2fa(username):
+    """Disable 2FA for a user"""
+    try:
+        session = Session()
+        user = session.query(User).filter_by(username=username).first()
+        if user:
+            user.totp_secret = None
+            session.commit()
+            return True, "2FA disabled successfully"
+        return False, "User not found"
+    except Exception as e:
+        session.rollback()
+        return False, f"Error disabling 2FA: {e}"
+    finally:
+        session.close()
+
+def reset_user_2fa(username):
+    """Reset 2FA for a user"""
+    try:
+        session = Session()
+        user = session.query(User).filter_by(username=username).first()
+        if user:
+            user.totp_secret = generate_totp_secret()
+            session.commit()
+            return True, "2FA reset successfully"
+        return False, "User not found"
+    except Exception as e:
+        session.rollback()
+        return False, f"Error resetting 2FA: {e}"
+    finally:
+        session.close()
+
+def get_user_totp_secret(username):
+    """Get user's TOTP secret"""
+    try:
+        session = Session()
+        user = session.query(User).filter_by(username=username).first()
+        return user.totp_secret if user else None
+    except Exception as e:
+        print(f"Error getting TOTP secret: {e}")
+        return None
+    finally:
+        session.close()
+
+def update_user_email(username, new_email):
+    """Update user's email"""
+    try:
+        session = Session()
+        user = session.query(User).filter_by(username=username).first()
+        if user:
+            user.email = new_email
+            session.commit()
+            return True, "Email updated successfully"
+        return False, "User not found"
+    except Exception as e:
+        session.rollback()
+        return False, f"Error updating email: {e}"
+    finally:
+        session.close()
+
+def verify_seed():
+    """
+    Verify that users were seeded correctly with all required fields.
+    """
+    try:
+        session = Session()
+        users = session.query(User).all()
+        
+        for user in users:
+            print(f"\nVerifying user: {user.username}")
+            print(f"Role: {user.role}")
+            print(f"Email set: {'Yes' if user.email else 'No'}")
+            print(f"TOTP secret set: {'Yes' if user.totp_secret else 'No'}")
+            
+            # Verify password meets requirements
+            is_valid, message = validate_password(user.password)
+            print(f"Password valid: {'Yes' if is_valid else 'No - ' + message}")
+            
+            # Verify TOTP secret is valid
+            if user.totp_secret:
+                try:
+                    totp = pyotp.TOTP(user.totp_secret)
+                    totp.now()  # This will raise an exception if the secret is invalid
+                    print("TOTP secret is valid")
+                except Exception as e:
+                    print(f"TOTP secret is invalid: {e}")
+                    
+    except Exception as e:
+        print(f"Error verifying seed: {e}")
+    finally:
+        session.close()
+
+def send_reset_email(email, reset_token):
+    """Send password reset email with verification code"""
+    sender_email = st.secrets["EMAIL_ADDRESS"]
+    sender_password = st.secrets["EMAIL_PASSWORD"]
+    
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = email
+    msg['Subject'] = "Password Reset Request"
+    
+    body = f"""
+    You have requested to reset your password.
+    Your verification code is: {reset_token}
+    
+    This code will expire in 15 minutes.
+    If you did not request this reset, please ignore this email.
+    """
+    
+    msg.attach(MIMEText(body, 'plain'))
+    
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        print(f"Error sending email: {e}")
+        return False
+
+def verify_totp(secret, token):
+    """Verify a TOTP token"""
+    totp = pyotp.TOTP(secret)
+    return totp.verify(token)
+
+def initiate_password_reset(username_or_email):
+    """Start the password reset process"""
+    try:
+        session = Session()
+        # Check if input is username or email
+        user = (session.query(User)
+               .filter((User.username == username_or_email) | 
+                      (User.email == username_or_email))
+               .first())
+        
+        if not user:
+            return False, "User not found"
+            
+        # Generate reset token (6-digit code)
+        reset_token = ''.join([str(random.randint(0, 9)) for _ in range(6)])
+        
+        # Set token expiry (15 minutes)
+        user.reset_token = reset_token
+        user.reset_token_expiry = datetime.now() + timedelta(minutes=15)
+        
+        # Send reset email
+        if send_reset_email(user.email, reset_token):
+            session.commit()
+            return True, "Reset email sent"
+        else:
+            return False, "Failed to send reset email"
+            
+    except Exception as e:
+        session.rollback()
+        return False, f"Error initiating reset: {e}"
+    finally:
+        session.close()
+
+def verify_reset_token(username_or_email, token):
+    """Verify the reset token"""
+    try:
+        session = Session()
+        user = (session.query(User)
+               .filter((User.username == username_or_email) | 
+                      (User.email == username_or_email))
+               .first())
+        
+        if not user:
+            return False, "User not found"
+            
+        if not user.reset_token or not user.reset_token_expiry:
+            return False, "No reset token found"
+            
+        if datetime.now() > user.reset_token_expiry:
+            return False, "Reset token expired"
+            
+        if user.reset_token != token:
+            return False, "Invalid reset token"
+            
+        return True, "Token verified"
+        
+    except Exception as e:
+        return False, f"Error verifying token: {e}"
+    finally:
+        session.close()
+
+def reset_password_2fa(username_or_email, new_password, reset_token):
+    """Reset password with 2FA verification"""
+    try:
+        # First verify the reset token
+        is_valid, message = verify_reset_token(username_or_email, reset_token)
+        if not is_valid:
+            return False, message
+            
+        session = Session()
+        user = (session.query(User)
+               .filter((User.username == username_or_email) | 
+                      (User.email == username_or_email))
+               .first())
+        
+        # Validate new password
+        is_valid, message = validate_password(new_password)
+        if not is_valid:
+            return False, message
+        
+        # Update password and clear reset token
+        user.password = new_password
+        user.reset_token = None
+        user.reset_token_expiry = None
+        
+        # Generate new TOTP secret for 2FA
+        user.totp_secret = generate_totp_secret()
+        
+        session.commit()
+        return True, "Password reset successful"
+        
+    except Exception as e:
+        session.rollback()
+        return False, f"Error resetting password: {e}"
+    finally:
+        session.close()
+
+def password_reset_interface():
+    """Streamlit interface for password reset"""
+    st.title("Password Reset")
+    
+    # Step 1: Request reset
+    with st.form("reset_request_form"):
+        username_or_email = st.text_input("Enter Username or Email")
+        request_reset = st.form_submit_button("Request Reset")
+        
+        if request_reset:
+            success, message = initiate_password_reset(username_or_email)
+            if success:
+                st.success(message)
+                st.session_state['reset_requested'] = True
+                st.session_state['reset_username'] = username_or_email
+            else:
+                st.error(message)
+    
+    # Step 2: Verify token and reset password
+    if st.session_state.get('reset_requested'):
+        with st.form("reset_password_form"):
+            reset_token = st.text_input("Enter Reset Code", key="reset_token")
+            new_password = st.text_input("New Password", type="password")
+            confirm_password = st.text_input("Confirm Password", type="password")
+            
+            reset_submit = st.form_submit_button("Reset Password")
+            
+            if reset_submit:
+                if new_password != confirm_password:
+                    st.error("Passwords do not match")
+                else:
+                    success, message = reset_password_2fa(
+                        st.session_state['reset_username'],
+                        new_password,
+                        reset_token
+                    )
+                    if success:
+                        st.success(message)
+                        # Clear reset state
+                        st.session_state.pop('reset_requested', None)
+                        st.session_state.pop('reset_username', None)
+                        # Redirect to login
+                        st.rerun()
+                    else:
+                        st.error(message)
 
 
 def cleanup_on_logout(username = st.session_state.get("username"), refresh = True):
@@ -442,8 +836,15 @@ def authenticate(username, password):
 # Login Page
 def login_page():
     """Display login form and authenticate users."""
-    st.title("Login Portal")
-    
+    if st.session_state['reset_mode'] is not True:
+        st.title("Login Portal")
+
+    if st.session_state.get('reset_mode'):
+        password_reset_interface()
+        if st.button("Back to Login"):
+            st.session_state.pop('reset_mode', None)
+            st.rerun()
+        return
 
     # Group inputs and button in a form for "Enter" support
     with st.form("login_form"):
@@ -451,7 +852,14 @@ def login_page():
         password = st.text_input("Password", type="password", key="login_password")
         
         # Visible Login button (inside the form for "Enter" key support)
-        login_button = st.form_submit_button("Login")
+        col1, col2 = st.columns([2,1])
+        with col1:
+            login_button = st.form_submit_button("Login")
+        
+    # Add "Forgot Password?" link below the form
+    if st.button("Forgot Password?"):
+        st.session_state['reset_mode'] = True
+        st.rerun()
 
     # Handle login logic when either the "Login" button is clicked or "Enter" is pressed
     if login_button:
@@ -601,102 +1009,6 @@ def speech_to_text_groq(audio_file):
 
     
     return dialog, language_code
-
-
-
-# def speech_to_text(audio_file):
-#     dialog =""
-
-#     # Transcribe the audio
-#     transcription = client.audio.transcriptions.create(
-#         model="whisper-1",
-#         file=open(audio_file, "rb"),
-#         prompt="Elena Pryor, Samir, Sahil, Mihir, IPP, IPPFA",
-#         temperature=0
-
-#     )
-#     if not transcription or not transcription.text:
-#         raise ValueError("No transcription text received from Whisper API")
-
-#     dialog = transcription.text
-#     # OPTIONAL: Uncomment the line below to print the transcription
-#     # print("Transcript: ", dialog + "  \n\n")
-
-#     response = client.chat.completions.create(
-#     model="gpt-4o-mini",
-#     messages=[
-#         {"role": "system", "content": """You are analyzing a sales call transcript. Apply these EXACT rules in order:
-
-#     1. FIRST: Identify Speech Patterns
-#     Telemarketer MUST be speaker when:
-#     - Using "Ms./Mrs. Hamid"
-#     - Asking about schedule ("When is your off day?")
-#     - Making confirmation statements ending with "right?"
-#     - Explaining business/MAS
-#     - Following up on customer's answers
-    
-#     Customer MUST be speaker when:
-#     - Using "Ba" or broken English
-#     - Showing resistance ("no no", "cannot")
-#     - Expressing confusion
-#     - Making excuses about time/schedule
-#     - Using repeated words ("sorry sorry")
-
-#     2. THEN: Check Question Types
-#     Telemarketer Questions ONLY:
-#     - Schedule inquiries
-#     - Work-related questions
-#     - Family-related questions
-#     - Confirmation questions
-#     - Location questions
-    
-#     Customer Questions ONLY:
-#     - "What?"/"Pardon?"
-#     - "Who are you?"
-#     - Questions about documents
-#     - Questions showing confusion
-
-#     3. THEN: Check Response Patterns
-#     Telemarketer Responses:
-#     - Professional acknowledgments
-#     - Schedule proposals
-#     - Business explanations
-#     - Family/work inquiries
-    
-#     Customer Responses:
-#     - Short answers
-#     - Time excuses
-#     - Location excuses
-#     - Confused responses
-
-#     4. FINALLY: Verify Context
-#     - Each confirmation question ("...right?") MUST be from Telemarketer
-#     - Each statement of personal plans MUST be from Customer
-#     - Each formal address ("Ms./Mrs. Hamid") MUST be from Telemarketer
-#     - Each informal/broken English MUST be from Customer
-
-#     Double-check that attributed speakers maintain these patterns consistently."""},
-#             {"role": "user", "content": f"Process this transcript, applying rules strictly in order: {transcription.text}"}
-#         ],
-#         temperature=0,
-#         max_tokens=16384
-#     )
-    
-#     output = response.choices[0].message.content
-#     # print(output)
-#     dialog = output.replace("json", "").replace("```", "")
-#     formatted_transcript = ""
-#     dialog = json.loads(dialog)
-#     language_code = dialog["language_code"]
-#     print(language_code)
-#     for entry in dialog['transcript']:
-#         formatted_transcript += f"{entry['speaker']}: {entry['text']}  \n\n"
-#     print(formatted_transcript)
-
-#     # Joining the formatted transcript into a single string
-#     dialog = formatted_transcript
-
-#     return dialog, language_code
 
 
 def speech_to_text(audio_file):
@@ -1652,6 +1964,8 @@ def main():
         # Add this with your other session state initializations
         if 'token_counts' not in st.session_state:
             st.session_state.token_counts = {}
+        if 'reset_mode' not in st.session_state:
+            st.session_state.reset_mode = False
         if "logged_in" not in st.session_state:
             st.session_state["logged_in"] = False
             st.session_state["username"] = None
