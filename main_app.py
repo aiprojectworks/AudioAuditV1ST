@@ -159,12 +159,18 @@ def validate_password(password: str) -> Tuple[bool, str]:
         return False, "Password must contain at least one special character."
     return True, ""
 
-def add_user(username: str, password: str, role: str = "user") -> Tuple[bool, str]:
+def add_user(username: str, password: str, role: str = "user", email: str = None, totp_secret: str = None) -> Tuple[bool, str]:
     """Add a new user to the database"""
     try:
         # Validate password
         session = Session()
-        new_user = User(username=username, password=password, role=role)
+        new_user = User(
+            username=username, 
+            password=password, 
+            role=role,
+            email=email,
+            totp_secret=totp_secret
+            )
         is_valid, message = validate_password(password)
         if not is_valid:
             return False, message
@@ -181,11 +187,13 @@ def add_user(username: str, password: str, role: str = "user") -> Tuple[bool, st
         session.close()
 
 def delete_user(username: str) -> Tuple[bool, str]:
+    print("Deleting user")
     """Delete a user from the database"""
     try:
         session = Session()
         user = session.query(User).filter_by(username=username).first()
         if user:
+            print(f"Deleting user: {username}")
             if user.role == "admin":
                 # Count number of admin users
                 admin_count = session.query(User).filter_by(role="admin").count()
@@ -264,15 +272,16 @@ def admin_interface():
     with col1:
         new_username = st.text_input("Username", key="new_username")
         new_password = st.text_input("Password", type="password", key="new_password")
-        new_role = st.selectbox("Role", ["user", "admin"], key="new_role")
     with col2:
         new_email = st.text_input("Email", key="new_email")
-        enable_2fa = st.checkbox("Enable 2FA", key="enable_2fa")
+        new_role = st.selectbox("Role", ["user", "admin"], key="new_role")
+
+        # enable_2fa = st.checkbox("Enable 2FA", key="enable_2fa")
     
     if st.button("Add User"):
         if new_username and new_password and new_email:
             # Generate TOTP secret if 2FA is enabled
-            totp_secret = generate_totp_secret() if enable_2fa else None
+            totp_secret = generate_totp_secret()
             
             success, message = add_user(
                 username=new_username,
@@ -284,12 +293,12 @@ def admin_interface():
             
             if success:
                 st.success(message)
-                if enable_2fa:
-                    # Display TOTP QR code and secret for initial setup
-                    totp = pyotp.TOTP(totp_secret)
-                    qr_code = qrcode.make(totp.provisioning_uri(new_email, issuer_name="Your App Name"))
-                    st.image(qr_code, caption="Scan this QR code with Google Authenticator")
-                    st.code(totp_secret, language=None)
+                # if enable_2fa:
+                #     # Display TOTP QR code and secret for initial setup
+                #     totp = pyotp.TOTP(totp_secret)
+                #     qr_code = qrcode.make(totp.provisioning_uri(new_email, issuer_name="Your App Name"))
+                #     st.image(qr_code, caption="Scan this QR code with Google Authenticator")
+                #     st.code(totp_secret, language=None)
                 create_log_entry(f"Admin Action: Added new user - {new_username}")
             else:
                 st.error(message)
@@ -304,7 +313,7 @@ def admin_interface():
     if users:
         for user in users:
             with st.expander(f"User: {user['username']} ({user['role']})"):
-                tab1, tab2, tab3 = st.tabs(["Account", "Security", "2FA"])
+                tab1, tab2 = st.tabs(["Account", "Security"])
                 
                 # Tab 1: Account Management
                 with tab1:
@@ -349,63 +358,62 @@ def admin_interface():
                                 else:
                                     st.error(message)
                     
-                    with col2:
-                        if st.button("Reset 2FA", key=f"btn_reset_2fa_{user['username']}"):
-                            success, message = reset_user_2fa(user['username'])
-                            if success:
-                                st.success("2FA has been reset. New QR code generated.")
-                                create_log_entry(f"Admin Action: Reset 2FA for user - {user['username']}")
-                                # Show new QR code
-                                totp_secret = get_user_totp_secret(user['username'])
-                                if totp_secret:
-                                    totp = pyotp.TOTP(totp_secret)
-                                    qr_code = qrcode.make(totp.provisioning_uri(user['email'], issuer_name="Your App Name"))
-                                    st.image(qr_code, caption="New 2FA QR Code")
-                                    st.code(totp_secret, language=None)
-                            else:
-                                st.error(message)
+                    # with col2:
+                    #     if st.button("Reset 2FA", key=f"btn_reset_2fa_{user['username']}"):
+                    #         success, message = reset_user_2fa(user['username'])
+                    #         if success:
+                    #             st.success("2FA has been reset. New QR code generated.")
+                    #             create_log_entry(f"Admin Action: Reset 2FA for user - {user['username']}")
+                    #             # Show new QR code
+                    #             totp_secret = get_user_totp_secret(user['username'])
+                    #             if totp_secret:
+                    #                 totp = pyotp.TOTP(totp_secret)
+                    #                 qr_code = qrcode.make(totp.provisioning_uri(user['email'], issuer_name="Your App Name"))
+                    #                 st.image(qr_code, caption="New 2FA QR Code")
+                    #                 st.code(totp_secret, language=None)
+                    #         else:
+                    #             st.error(message)
                 
                 # Tab 3: 2FA Status
-                with tab3:
-                    has_2fa = check_user_2fa_status(user['username'])
-                    st.write(f"2FA Status: {'Enabled' if has_2fa else 'Disabled'}")
+                # with tab3:
+                #     has_2fa = check_user_2fa_status(user['username'])
+                #     st.write(f"2FA Status: {'Enabled' if has_2fa else 'Disabled'}")
                     
-                    if has_2fa:
-                        if st.button("Disable 2FA", key=f"btn_disable_2fa_{user['username']}"):
-                            success, message = disable_user_2fa(user['username'])
-                            if success:
-                                st.success("2FA has been disabled")
-                                create_log_entry(f"Admin Action: Disabled 2FA for user - {user['username']}")
-                                st.rerun()
-                            else:
-                                st.error(message)
-                    else:
-                        if st.button("Enable 2FA", key=f"btn_enable_2fa_{user['username']}"):
-                            success, message = enable_user_2fa(user['username'])
-                            if success:
-                                st.success("2FA has been enabled. Scan the QR code below.")
-                                create_log_entry(f"Admin Action: Enabled 2FA for user - {user['username']}")
-                                # Show QR code
-                                totp_secret = get_user_totp_secret(user['username'])
-                                if totp_secret:
-                                    totp = pyotp.TOTP(totp_secret)
-                                    qr_code = qrcode.make(totp.provisioning_uri(user['email'], issuer_name="Your App Name"))
-                                    st.image(qr_code, caption="2FA QR Code")
-                                    st.code(totp_secret, language=None)
-                                st.rerun()
-                            else:
-                                st.error(message)
+                #     if has_2fa:
+                #         if st.button("Disable 2FA", key=f"btn_disable_2fa_{user['username']}"):
+                #             success, message = disable_user_2fa(user['username'])
+                #             if success:
+                #                 st.success("2FA has been disabled")
+                #                 create_log_entry(f"Admin Action: Disabled 2FA for user - {user['username']}")
+                #                 st.rerun()
+                #             else:
+                #                 st.error(message)
+                #     else:
+                #         if st.button("Enable 2FA", key=f"btn_enable_2fa_{user['username']}"):
+                #             success, message = enable_user_2fa(user['username'])
+                #             if success:
+                #                 st.success("2FA has been enabled. Scan the QR code below.")
+                #                 create_log_entry(f"Admin Action: Enabled 2FA for user - {user['username']}")
+                #                 # Show QR code
+                #                 totp_secret = get_user_totp_secret(user['username'])
+                #                 if totp_secret:
+                #                     totp = pyotp.TOTP(totp_secret)
+                #                     qr_code = qrcode.make(totp.provisioning_uri(user['email'], issuer_name="Your App Name"))
+                #                     st.image(qr_code, caption="2FA QR Code")
+                #                     st.code(totp_secret, language=None)
+                #                 st.rerun()
+                #             else:
+                #                 st.error(message)
                 
                 # Delete User Button (outside tabs)
                 if st.button("Delete User", key=f"btn_del_{user['username']}", type="secondary"):
-                    if st.button("Confirm Delete", key=f"btn_confirm_del_{user['username']}", type="primary"):
-                        success, message = delete_user(user['username'])
-                        if success:
-                            st.success(message)
-                            create_log_entry(f"Admin Action: Deleted user - {user['username']}")
-                            st.rerun()
-                        else:
-                            st.error(message)
+                    success, message = delete_user(user['username'])
+                    if success:
+                        st.success(message)
+                        create_log_entry(f"Admin Action: Deleted user - {user['username']}")
+                        st.rerun()
+                    else:
+                        st.error(message)
     else:
         st.info("No users found")
 
