@@ -586,8 +586,12 @@ def initiate_password_reset(username_or_email):
         if not user:
             return False, "User not found"
             
-        # Generate reset token (6-digit code)
-        reset_token = ''.join([str(random.randint(0, 9)) for _ in range(6)])
+        timestamp = int(time.time() * 1000)
+        random_part = random.randint(100, 999)
+
+        reset_token = (timestamp % 1000) * 1000 + random_part
+
+        # reset_token = ''.join([str(random.randint(0, 9)) for _ in range(6)])
         
         # Set token expiry (15 minutes)
         user.reset_token = reset_token
