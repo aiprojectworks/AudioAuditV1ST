@@ -66,12 +66,9 @@ import smtplib
 import traceback
 import numpy as np
 import pyotp
-import qrcode
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime, timedelta
-from sqlalchemy import Column, String, DateTime
-from database import Base, Session
+from datetime import timedelta
 import random
 
 # from trulens_eval import feedback
