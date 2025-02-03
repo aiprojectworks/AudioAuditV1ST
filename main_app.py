@@ -84,6 +84,15 @@ import random
 # LiveOptions,
 # )
 
+import asyncio
+import aiohttp
+from typing import List, Dict, Any, Optional
+from tenacity import retry, stop_after_attempt, wait_random_exponential
+
+
+from pathlib import Path
+
+
 
 class KillableThread(threading.Thread):
     def __init__(self, *args, **kwargs):
@@ -1244,9 +1253,6 @@ def groq_LLM_audit(dialog): #*not in use
     torch.cuda.empty_cache()
 
     return output_dict
-        
-
-    
 
 
 def LLM_audit(dialog, audio_file):
@@ -1309,13 +1315,57 @@ def LLM_audit(dialog, audio_file):
             %s
         """ % (dialog)
         
+        stage_2_prompt = """
+        You are an auditor for IPP or IPPFA. Return ONLY  a valid JSON obect. 
 
-        # compressed_stage1 = llm_lingua.compress_prompt(
-        #     stage_1_prompt,
-        #     target_token=500,  # Adjust as needed
-        #     force_tokens=["Pass", "Fail", "Not Applicable", "IPP", "IPPFA", "JSON"],
-        #     drop_consecutive=True,
-        # )
+        Required format:
+        [
+            {
+                "Criteria": "<criterion being evaluated>",
+                "Reason": "<specific evidence from conversation>",
+                "Result": "Pass/Fail/Not Applicable"
+            }
+        ]
+
+        You are tasked with auditing a conversation between a telemarketer from IPP or IPPFA and a customer. 
+        The audit evaluates whether the telemarketer adhered to specific criteria during the dialogue.
+
+        ### Instruction:
+            - Review the conversation transcript and evaluate compliance with the criteria below.
+            - Provide detailed assessments for each criterion, quoting evidence from the conversation and assigning a result status.
+            - Ensure all evaluations are based strictly on the content of the conversation. 
+            - Only mark "Pass" if clear evidence supports it. Exclude words in brackets from the criteria when responding.
+
+            Audit Criteria:
+                1. Did the telemarketer ask if the customer is interested in IPPFA's services?
+                2. If the customer showed uncertainty, did the telemarketer suggest a meeting or Zoom session with a consultant?
+                3. Did the telemarketer avoid pressuring the customer (for product introduction or appointment setting)? (Fail if pressure was applied.)
+
+            ** End of Criteria**
+
+        ### Response:
+            Generate JSON objects for each criteria in a list that must include the following keys:
+            - "Criteria": State the criterion being evaluated.
+            - "Reason": Provide specific reasons based on the conversation.
+            - "Result": Indicate whether the criterion was met with "Pass", "Fail", or "Not Applicable".
+
+            For Example (Required JSON format):
+                [
+                    {
+                        "Criteria": "Did the telemarketer asked about the age of the customer",
+                        "Reason": "The telemarketer asked how old the customer was.",
+                        "Result": "Pass"
+                    }
+                ]
+        IMPORTANT: 
+        - Return ONLY the JSON object
+        - No additional text before or after the JSON
+        - No explanations or summaries
+        - Ensure the JSON is properly formatted
+
+        ### Input:
+            %s
+        """ % (dialog)
 
         # Compress the dialog input
         compressed_dialog = llm_lingua.compress_prompt(
@@ -1325,139 +1375,91 @@ def LLM_audit(dialog, audio_file):
             drop_consecutive=True,
         )
 
-        model_engine ="gpt-4o-mini"
+        # model_engine ="gpt-4o-mini"
 
-        messages=[{'role':'user', 'content':f"{stage_1_prompt} {compressed_dialog['compressed_prompt']}"}]
+        # messages=[{'role':'user', 'content':f"{stage_1_prompt} {compressed_dialog['compressed_prompt']}"}]
 
-
-        completion = client.chat.completions.create(
-        model=model_engine,
-        messages=messages,
-        temperature=0,)
-
-        total_tokens += completion.usage.total_tokens
-        print(f"Total tokens used for audit: {total_tokens}")
-
-        stage_1_result = completion.choices[0].message.content
-
-        stage_1_result = process_stage_1(stage_1_result)
-
-        print(stage_1_result)
-
-
-        output_dict = {"Stage 1": stage_1_result}
-
-        if determine_pass_fail(stage_1_result) == "Pass":
-            stage_2_prompt = """
-            You are an auditor for IPP or IPPFA. Return ONLY  a valid JSON obect. 
-
-            Required format:
-            [
-                {
-                    "Criteria": "<criterion being evaluated>",
-                    "Reason": "<specific evidence from conversation>",
-                    "Result": "Pass/Fail/Not Applicable"
+        requests = [
+            {
+                "custom_id": f"{filename}_stage1",
+                "method": "POST",
+                "url": "/v1/chat/completions",
+                "body": {
+                    "model": "gpt-4o-mini",
+                    "messages": [
+                        {'role': 'user', 'content': f"{stage_1_prompt} {compressed_dialog['compressed_prompt']}"}
+                    ],
+                    "temperature": 0
                 }
-            ]
+            },
+            {
+                "custom_id": f"{filename}_stage2",
+                "method": "POST",
+                "url": "/v1/chat/completions",
+                "body": {
+                    "model": "gpt-4o-mini",
+                    "messages": [
+                        {'role': 'user', 'content': f"{stage_2_prompt} {compressed_dialog['compressed_prompt']}"}
+                    ],
+                    "temperature": 0
+                }
+            }
+        ]
+        username = st.session_state["username"]
+        user_folder = os.path.join(".", username)
+        os.makedirs(user_folder, exist_ok=True)
+        batch_file = os.path.join(user_folder, f"batch_requests_{filename}.jsonl")
 
-            You are tasked with auditing a conversation between a telemarketer from IPP or IPPFA and a customer. 
-            The audit evaluates whether the telemarketer adhered to specific criteria during the dialogue.
+        with open(batch_file, "w") as f:
+            for req in requests:
+                f.write(json.dumps(req) + "\n")
 
-            ### Instruction:
-                - Review the conversation transcript and evaluate compliance with the criteria below.
-                - Provide detailed assessments for each criterion, quoting evidence from the conversation and assigning a result status.
-                - Ensure all evaluations are based strictly on the content of the conversation. 
-                - Only mark "Pass" if clear evidence supports it. Exclude words in brackets from the criteria when responding.
+        try:
+            responses = []
+            with open(batch_file, "r") as f:
+                for line in f:
+                    request = json.loads(line)
+                    response = client.chat.completions.create(**request["body"])
+                    responses.append({
+                        "custom_id": request["custom_id"],
+                        "response": response
+                    })
+                    total_tokens += response.usage.total_tokens
 
-                Audit Criteria:
-                    1. Did the telemarketer ask if the customer is interested in IPPFA's services?
-                    2. If the customer showed uncertainty, did the telemarketer suggest a meeting or Zoom session with a consultant?
-                    3. Did the telemarketer avoid pressuring the customer (for product introduction or appointment setting)? (Fail if pressure was applied.)
+            # Process stage 1 result
+            stage_1_response = next(r for r in responses if r["custom_id"] == f"{filename}_stage1")
+            stage_1_result = process_stage_1(stage_1_response["response"].choices[0].message.content)
+            output_dict = {"Stage 1": stage_1_result}
 
-                ** End of Criteria**
+            # Process stage 2 if stage 1 passes
+            if determine_pass_fail(stage_1_result) == "Pass":
+                stage_2_response = next(r for r in responses if r["custom_id"] == f"{filename}_stage2")
+                stage_2_result = stage_2_response["response"].choices[0].message.content
+                stage_2_result = stage_2_result.replace("Audit Results:", "").replace("### Input:", "").replace("### Output:", "")
+                stage_2_result = stage_2_result.replace("### Response:", "").replace("json", "").replace("```", "").strip()
+                stage_2_result = format_json_with_line_break(stage_2_result)
+                stage_2_result = json.loads(stage_2_result)
+                output_dict["Stage 2"] = stage_2_result
+                output_dict["Overall Result"] = determine_overall_result(output_dict)
+            else:
+                output_dict["Overall Result"] = "Fail"
 
-            ### Response:
-                Generate JSON objects for each criteria in a list that must include the following keys:
-                - "Criteria": State the criterion being evaluated.
-                - "Reason": Provide specific reasons based on the conversation.
-                - "Result": Indicate whether the criterion was met with "Pass", "Fail", or "Not Applicable".
+            output_dict["Total Tokens"] = total_tokens
 
-                For Example (Required JSON format):
-                    [
-                        {
-                            "Criteria": "Did the telemarketer asked about the age of the customer",
-                            "Reason": "The telemarketer asked how old the customer was.",
-                            "Result": "Pass"
-                        }
-                    ]
-            IMPORTANT: 
-            - Return ONLY the JSON object
-            - No additional text before or after the JSON
-            - No explanations or summaries
-            - Ensure the JSON is properly formatted
+            if filename not in st.session_state.token_counts:
+                st.session_state.token_counts[filename] = {}
+            st.session_state.token_counts[filename]["audit"] = total_tokens
 
-            ### Input:
-                %s
-            """ % (dialog)
-            # compressed_stage2 = llm_lingua.compress_prompt(
-            #     stage_2_prompt,
-            #     target_token=500,
-            #     force_tokens=["Pass", "Fail", "Not Applicable", "IPP", "IPPFA", "JSON"],
-            #     drop_consecutive=True,
-            # )
+            return output_dict
 
-            compressed_text = llm_lingua.compress_prompt(
-                text,
-                rate=0.5,
-                force_tokens=["!", ".", "?", "\n"],
-                drop_consecutive=True,
-            )
+        except Exception as e:
+            print(f"Error in batch processing: {e}")
+            return None
 
-            messages=[{'role':'user', 'content':f"{stage_2_prompt} {compressed_text['compressed_prompt']}"}]
-
-            model_engine ="gpt-4o-mini"
-
-            completion = client.chat.completions.create(
-                model=model_engine,
-                messages=messages,
-                temperature=0,
-            )
-
-            total_tokens += completion.usage.total_tokens
-
-            stage_2_result = completion.choices[0].message.content
-            
-            stage_2_result = stage_2_result.replace("Audit Results:","")
-            stage_2_result = stage_2_result.replace("### Input:","")
-            stage_2_result = stage_2_result.replace("### Output:","")
-            stage_2_result = stage_2_result.replace("### Response:","")
-            stage_2_result = stage_2_result.replace("json","").replace("```","")
-            stage_2_result = stage_2_result.strip()
-
-            print(stage_2_result)
-
-            stage_2_result = format_json_with_line_break(stage_2_result)
-            stage_2_result = json.loads(stage_2_result)
-
-            output_dict["Stage 2"] = stage_2_result
-            # print("overall result = ", determine_overall_result(output_dict))
-            output_dict["Overall Result"] = determine_overall_result(output_dict)
-
-            # if output_dict["Overall Result"] == "Pass":
-            #     del output_dict["Overall Result"]
-        else: 
-            output_dict["Overall Result"] = "Fail"
-
-        output_dict["Total Tokens"] = total_tokens
-
-        if filename not in st.session_state.token_counts:
-            st.session_state.token_counts[filename] = {}
-
-        st.session_state.token_counts[filename]["audit"] = total_tokens
-
-
-        return output_dict
-
+        finally:
+            # Cleanup
+            if os.path.exists(batch_file):
+                os.remove(batch_file)
 
 
     def determine_pass_fail(result):
