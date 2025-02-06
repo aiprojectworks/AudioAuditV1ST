@@ -84,13 +84,6 @@ import random
 # LiveOptions,
 # )
 
-import asyncio
-import aiohttp
-from typing import List, Dict, Any, Optional
-from tenacity import retry, stop_after_attempt, wait_random_exponential
-
-
-from pathlib import Path
 
 
 
@@ -126,7 +119,7 @@ except Exception as e:
     print(f"Error initializing LLMLingua: {e}")
 
 
-print("torch version:", torch.__version__)
+# print("torch version:", torch.__version__)
 
 def is_admin(username: str) -> bool:
 
@@ -810,6 +803,15 @@ class HeartbeatManager:
             del self.active_threads[username]
 
     def stop_all(self):
+        #!batch processing that isnt working
+        # total_jobs = client.batches.list()
+        # for job in total_jobs:
+        #     print("jobs:", job.id, job.status, job) 
+        #     if job.status != "completed" or job.status != "failed":
+        #         try:
+        #             client.batches.cancel(job.id)
+        #         except Exception:
+        #             pass
         for username in list(self.active_threads.keys()):
             self.stop_beating(username)
 
@@ -1375,91 +1377,263 @@ def LLM_audit(dialog, audio_file):
             drop_consecutive=True,
         )
 
+        model_engine ="gpt-4o-mini"
+
+        messages=[{'role':'user', 'content':f"{stage_1_prompt} {compressed_dialog['compressed_prompt']}"}]
+
+        completion = client.chat.completions.create(
+            model=model_engine,
+            messages=messages,
+            temperature=0,
+        )
+
+        total_tokens += completion.usage.total_tokens
+        print(f"Total tokens used for audit: {total_tokens}")
+
+        stage_1_result = completion.choices[0].message.content
+
+        stage_1_result = process_stage_1(stage_1_result)
+
+        print(stage_1_result)
+
+
+        output_dict = {"Stage 1": stage_1_result}
+
+        if determine_pass_fail(stage_1_result) == "Pass":
+            compressed_text = llm_lingua.compress_prompt(
+                text,
+                rate=0.5,
+                force_tokens=["!", ".", "?", "\n"],
+                drop_consecutive=True,
+            )
+            
+            messages=[{'role':'user', 'content':f"{stage_2_prompt} {compressed_text['compressed_prompt']}"}]
+
+            model_engine ="gpt-4o-mini"
+
+            completion = client.chat.completions.create(
+                model=model_engine,
+                messages=messages,
+                temperature=0,
+            )
+
+            total_tokens += completion.usage.total_tokens
+
+            stage_2_result = completion.choices[0].message.content
+            
+            stage_2_result = stage_2_result.replace("Audit Results:","")
+            stage_2_result = stage_2_result.replace("### Input:","")
+            stage_2_result = stage_2_result.replace("### Output:","")
+            stage_2_result = stage_2_result.replace("### Response:","")
+            stage_2_result = stage_2_result.replace("json","").replace("```","")
+            stage_2_result = stage_2_result.strip()
+
+            print(stage_2_result)
+
+            stage_2_result = format_json_with_line_break(stage_2_result)
+            stage_2_result = json.loads(stage_2_result)
+
+            output_dict["Stage 2"] = stage_2_result
+            # print("overall result = ", determine_overall_result(output_dict))
+            output_dict["Overall Result"] = determine_overall_result(output_dict)
+
+            # if output_dict["Overall Result"] == "Pass":
+            #     del output_dict["Overall Result"]
+        else: 
+            output_dict["Overall Result"] = "Fail"
+
+        output_dict["Total Tokens"] = total_tokens
+
+        if filename not in st.session_state.token_counts:
+            st.session_state.token_counts[filename] = {}
+
+        st.session_state.token_counts[filename]["audit"] = total_tokens
+
+
+        return output_dict
+
+
+
         # model_engine ="gpt-4o-mini"
 
         # messages=[{'role':'user', 'content':f"{stage_1_prompt} {compressed_dialog['compressed_prompt']}"}]
 
-        requests = [
-            {
-                "custom_id": f"{filename}_stage1",
-                "method": "POST",
-                "url": "/v1/chat/completions",
-                "body": {
-                    "model": "gpt-4o-mini",
-                    "messages": [
-                        {'role': 'user', 'content': f"{stage_1_prompt} {compressed_dialog['compressed_prompt']}"}
-                    ],
-                    "temperature": 0
-                }
-            },
-            {
-                "custom_id": f"{filename}_stage2",
-                "method": "POST",
-                "url": "/v1/chat/completions",
-                "body": {
-                    "model": "gpt-4o-mini",
-                    "messages": [
-                        {'role': 'user', 'content': f"{stage_2_prompt} {compressed_dialog['compressed_prompt']}"}
-                    ],
-                    "temperature": 0
-                }
-            }
-        ]
-        username = st.session_state["username"]
-        user_folder = os.path.join(".", username)
-        os.makedirs(user_folder, exist_ok=True)
-        batch_file = os.path.join(user_folder, f"batch_requests_{filename}.jsonl")
+        #! batch processing that isnt working
+        # requests = [
+        #     {
+        #         "custom_id": f"{filename}_stage1",
+        #         "method": "POST",
+        #         "url": "/v1/chat/completions", 
+        #         "body": {
+        #             "model": "gpt-4o-mini",
+        #             "messages": [
+        #                 {'role': 'user', 'content': f"{stage_1_prompt} {compressed_dialog['compressed_prompt']}"}
+        #             ],
+        #             "temperature": 0
+        #         }
+        #     },
+        #     {
+        #         "custom_id": f"{filename}_stage2",
+        #         "method": "POST",
+        #         "url": "/v1/chat/completions", 
+        #         "body": {
+        #             "model": "gpt-4o-mini",
+        #             "messages": [
+        #                 {'role': 'user', 'content': f"{stage_2_prompt} {compressed_dialog['compressed_prompt']}"}
+        #             ],
+        #             "temperature": 0
+        #         }
+        #     }
+        # ]
+        # username = st.session_state["username"]
+        # user_folder = os.path.join(".", username)
+        # os.makedirs(user_folder, exist_ok=True)
+        # batch_file = os.path.join(user_folder, f"batch_requests_{filename}.jsonl")
 
-        with open(batch_file, "w") as f:
-            for req in requests:
-                f.write(json.dumps(req) + "\n")
+        # with open(batch_file, "w") as f:
+        #     for req in requests:
+        #         f.write(json.dumps(req) + "\n")
 
-        try:
-            responses = []
-            with open(batch_file, "r") as f:
-                for line in f:
-                    request = json.loads(line)
-                    response = client.chat.completions.create(**request["body"])
-                    responses.append({
-                        "custom_id": request["custom_id"],
-                        "response": response
-                    })
-                    total_tokens += response.usage.total_tokens
+        # try:
+        #     # Upload JSONL file and create batch job
+        #     with open(batch_file, "rb") as f:
+        #         batch_file_upload = client.files.create(
+        #             file=f,
+        #             purpose="batch"
+        #         )
+            
+        #     # Submit batch job - corrected parameters based on OpenAI docs
+        #     batch_job = client.batches.create(
+        #         input_file_id=batch_file_upload.id,
+        #         endpoint="/v1/chat/completions",
+        #         completion_window="24h"
+        #     )
+            
+        #     # Wait for batch completion
+        #     # During status checking
+        #     total_jobs = client.batches.list()
+        #     for job in total_jobs:
+        #         print(f"\nJob ID: {job.id}")
+        #         print(f"Status: {job.status}")
+        #         print(f"Created at: {job.created_at}")
+        #         print(f"Completed at: {job.completed_at}")
+        #         print(f"Request counts: {job.request_counts}")
+        #         if hasattr(job, 'output_file_id') and job.output_file_id is not None:
+        #             print(f"Output file ID: {job.output_file_id}")
+        #             try:
+        #                 output_text = client.files.content(job.output_file_id).text
+        #                 print(f"Output text: {output_text}")
+        #             except Exception as e:
+        #                 print(f"Error retrieving output text: {e}")
+        #         if hasattr(job, 'failed_at'):
+        #             print(f"Failed at: {job.failed_at}")
+        #         print("----------------------")
 
-            # Process stage 1 result
-            stage_1_response = next(r for r in responses if r["custom_id"] == f"{filename}_stage1")
-            stage_1_result = process_stage_1(stage_1_response["response"].choices[0].message.content)
-            output_dict = {"Stage 1": stage_1_result}
+        #             # print("jobs:", job.id, job.status, job)
 
-            # Process stage 2 if stage 1 passes
-            if determine_pass_fail(stage_1_result) == "Pass":
-                stage_2_response = next(r for r in responses if r["custom_id"] == f"{filename}_stage2")
-                stage_2_result = stage_2_response["response"].choices[0].message.content
-                stage_2_result = stage_2_result.replace("Audit Results:", "").replace("### Input:", "").replace("### Output:", "")
-                stage_2_result = stage_2_result.replace("### Response:", "").replace("json", "").replace("```", "").strip()
-                stage_2_result = format_json_with_line_break(stage_2_result)
-                stage_2_result = json.loads(stage_2_result)
-                output_dict["Stage 2"] = stage_2_result
-                output_dict["Overall Result"] = determine_overall_result(output_dict)
-            else:
-                output_dict["Overall Result"] = "Fail"
+                    
+        #     while True:
+        #         job_status = client.batches.retrieve(batch_job.id)
+        #         # print(f"Current status: {job_status.status}")
+        #         # print(f"Request counts: {job_status.request_counts}")
+        #         # print(f"Detailed status: {job_status}")  # Add this to see all available information
+                
 
-            output_dict["Total Tokens"] = total_tokens
+        #         if job_status.status == "completed":
+        #             break
+        #         elif job_status.status == "failed":
+        #             if hasattr(job_status, 'error'):
+        #                 error_msg = job_status.error
+        #             else:
+        #                 error_msg = "Unknown error - batch job failed"
+        #             raise Exception(f"Batch job failed: {error_msg}")
+        #         elif job_status.status == "validating":
+        #             print("Job is still validating...")
+                
+        #         time.sleep(10)
 
-            if filename not in st.session_state.token_counts:
-                st.session_state.token_counts[filename] = {}
-            st.session_state.token_counts[filename]["audit"] = total_tokens
 
-            return output_dict
+        #     # Get results
+        #     if not job_status.output_file_id:
+        #         raise Exception("No output file ID received")
+                
+        #     result_content = client.files.content(job_status.output_file_id).text
+            
+            # results = []
+            # for line in result_content.split('\n'):
+            #     if line:
+            #         try:
+            #             results.append(json.loads(line))
+            #         except json.JSONDecodeError as e:
+            #             print(f"Error parsing result line: {e}")
+            #             continue
 
-        except Exception as e:
-            print(f"Error in batch processing: {e}")
-            return None
+            # if not results:
+            #     raise Exception("No valid results received from batch job")
 
-        finally:
-            # Cleanup
-            if os.path.exists(batch_file):
-                os.remove(batch_file)
+            # # Initialize output dict
+            # output_dict = {"Stage 1": [], "Overall Result": "Fail"}
+            
+            # try:
+            #     # Process stage 1 result
+            #     stage_1_response = next(r for r in results if r["custom_id"] == f"{filename}_stage1")
+            #     if not stage_1_response:
+            #         raise Exception("Stage 1 response not found in results")
+                    
+            #     stage_1_result = process_stage_1(stage_1_response["response"]["body"]["choices"][0]["message"]["content"])
+            #     output_dict["Stage 1"] = stage_1_result
+
+            #     # Only proceed to stage 2 if stage 1 passes
+            #     if determine_pass_fail(stage_1_result) == "Pass":
+            #         stage_2_response = next(r for r in results if r["custom_id"] == f"{filename}_stage2")
+            #         if stage_2_response:
+            #             stage_2_result = stage_2_response["response"]["body"]["choices"][0]["message"]["content"]
+            #             stage_2_result = stage_2_result.replace("Audit Results:", "").replace("### Input:", "").replace("### Output:", "")
+            #             stage_2_result = stage_2_result.replace("### Response:", "").replace("json", "").replace("```", "").strip()
+            #             stage_2_result = format_json_with_line_break(stage_2_result)
+            #             stage_2_result = json.loads(stage_2_result)
+            #             output_dict["Stage 2"] = stage_2_result
+            #             output_dict["Overall Result"] = determine_overall_result(output_dict)
+
+            #     # Track tokens
+            #     total_tokens = sum(r["response"].get("usage", {}).get("total_tokens", 0) for r in results)
+            #     output_dict["Total Tokens"] = total_tokens
+
+            #     if filename not in st.session_state.token_counts:
+            #         st.session_state.token_counts[filename] = {}
+            #     st.session_state.token_counts[filename]["audit"] = total_tokens
+
+            # except Exception as e:
+            #     print(f"Error processing results: {e}")
+            #     # Don't return None, return a valid output_dict with error status
+            #     output_dict["error"] = str(e)
+
+            # # Clean up files
+            # try:
+            #     client.files.delete(batch_file_upload.id)
+            #     client.files.delete(job_status.output_file_id)
+            # except Exception as e:
+            #     print(f"Error cleaning up OpenAI files: {e}")
+
+            # return output_dict
+
+        # except Exception as e:
+        #     print(f"Error in batch processing: {e}")
+        #     # Return a valid dict instead of None
+        #     return {
+        #         "Stage 1": [],
+        #         "Overall Result": "Error",
+        #         "error": str(e),
+        #         "Total Tokens": 0
+        #     }
+
+        # finally:
+        #     # Local file cleanup
+        #     try:
+        #         if os.path.exists(batch_file):
+        #             os.remove(batch_file)
+        #     except Exception as e:
+        #         print(f"Error cleaning up local file: {e}")
 
 
     def determine_pass_fail(result):
@@ -2487,6 +2661,6 @@ def main():
 
 if __name__ == "__main__":
     seed_users()
-    print(torch.cuda.is_available())  # Should return True if CUDA is set up
+    # print(torch.cuda.is_available())  # Should return True if CUDA is set up
 
     main()
