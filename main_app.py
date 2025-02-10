@@ -1401,14 +1401,8 @@ def LLM_audit(dialog, audio_file):
         output_dict = {"Stage 1": stage_1_result}
 
         if determine_pass_fail(stage_1_result) == "Pass":
-            compressed_text = llm_lingua.compress_prompt(
-                text,
-                rate=0.5,
-                force_tokens=["!", ".", "?", "\n"],
-                drop_consecutive=True,
-            )
-            
-            messages=[{'role':'user', 'content':f"{stage_2_prompt} {compressed_text['compressed_prompt']}"}]
+                        
+            messages=[{'role':'user', 'content':f"{stage_2_prompt} {compressed_dialog}"}]
 
             model_engine ="gpt-4o-mini"
 
