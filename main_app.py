@@ -2143,6 +2143,27 @@ def display_trulens_feedback(feedback_results, unique_key):
         st.error(f"Error displaying feedback metrics: {e}")
         print(f"Full error details: {traceback.format_exc()}")
 
+
+def student_credit():
+    """Display the student credits for this project"""
+    st.title("Credits")
+    st.markdown("---")
+    st.markdown("""
+    ### Done By:
+    * Teh Yong Siu
+    
+    ### Under the Supervision of:
+    * Dr Elena Pryor
+    
+    ### Special Thanks to:
+    * Samir Saluja
+    * Sahil Shah
+    * Mihir Shah
+    
+    ### From:
+    Singapore Institute of Technology (SIT)
+    """)
+
 def main():
     try:
         if st.session_state.get("user_deleted", False):
@@ -2177,6 +2198,7 @@ def main():
             # After successful login, show the main dashboard
             st.sidebar.success(f"Logged in as: {st.session_state['username']}")
 
+
             if st.sidebar.button("Logout"):
                 cleanup_on_logout()
                 st.rerun()
@@ -2186,7 +2208,6 @@ def main():
                 if st.sidebar.button(button_text, key="admin_toggle_button"):
                     st.session_state.show_admin = not st.session_state.get('show_admin', False)
                     st.rerun()
-
 
 
             if st.session_state.get('show_admin', False):
@@ -2220,7 +2241,6 @@ def main():
                 method = st.radio("Select Upload Method:", options=["Upload Files / Folder"], horizontal=True, key='upload_method', on_change=log_selection)
 
 
-            
 
                 audio_files = []
                 status = ""
