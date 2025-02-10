@@ -2144,26 +2144,6 @@ def display_trulens_feedback(feedback_results, unique_key):
         print(f"Full error details: {traceback.format_exc()}")
 
 
-def student_credit():
-    """Display the student credits for this project"""
-    st.title("Credits")
-    st.markdown("---")
-    st.markdown("""
-    ### Done By:
-    * Teh Yong Siu
-    
-    ### Under the Supervision of:
-    * Dr Elena Pryor
-    
-    ### Special Thanks to:
-    * Samir Saluja
-    * Sahil Shah
-    * Mihir Shah
-    
-    ### From:
-    Singapore Institute of Technology (SIT)
-    """)
-
 def main():
     try:
         if st.session_state.get("user_deleted", False):
