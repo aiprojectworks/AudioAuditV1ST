@@ -2234,10 +2234,34 @@ def main():
                     
                     st.write(f"Transcription Model:\n\n{transcribe_option.replace('(Recommended)','')}\n\nAudit Model:\n\n{audit_option.replace('(Recommended)','')}")
                     st.markdown('<p style="color:red;">Groq AI Models are not recommended for file sizes of more than 1MB. Model will start to hallucinate.</p>', unsafe_allow_html=True)
-
+        
                 st.title("AI Transcription & Audit Service")
                 st.info("Upload an audio file or select a folder to convert audio to text.", icon=":material/info:")
-                
+                st.sidebar.title("📜 Credits")
+                st.sidebar.markdown("""
+                Developed by:
+                - **Lee Hien Gin** (AY2024/25 P4)  
+                - **Teh Yong Siu** (AY2024/25 P4)  
+                """)
+
+                st.sidebar.markdown("---")  # Divider
+
+                st.sidebar.subheader("🛠 Technologies Used")
+                st.sidebar.write("""
+                - **Streamlit** (Frontend UI)  
+                - **OpenAI Whisper & GPT** (Transcription & Audit)  
+                - **Groq API** (Alternative Transcription)  
+                - **TruLens** (Evaluation Feedback)  
+                - **SQLAlchemy** (Database Management)
+                """)
+
+                st.sidebar.subheader("📚 References")
+                st.sidebar.write("""
+                - [OpenAI API Docs](https://platform.openai.com/docs)  
+                - [Streamlit Docs](https://docs.streamlit.io)  
+                - [TruLens Framework](https://trulens.org)
+                - [GitHub Repo](https://github.com/aiprojectworks/AudioAuditV1ST) 
+                """)
                 method = st.radio("Select Upload Method:", options=["Upload Files / Folder"], horizontal=True, key='upload_method', on_change=log_selection)
 
 
