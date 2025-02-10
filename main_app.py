@@ -1051,29 +1051,41 @@ def speech_to_text(audio_file):
 
     system_prompt = """Insert speaker labels for a telemarketer and a customer based on the dialogue as accurately as possible. Return in a JSON format together with the original language code. Translate the entire transcript accurately into English. Ensure the segmentation is logical and each line reflects a single speaker's statement. Maintain consistency in labeling (e.g., do not mix speaker roles). Preserve the original speaker intent and tone in the translation."""
 
-    compressed_system = llm_lingua.compress_prompt(
-            system_prompt,
-            target_token=150,  # Adjust this value as needed
-            force_tokens=["JSON", "English", "speaker", "telemarketer", "customer"],
+
+    if st.session_state.use_compression:
+        compressed_system = llm_lingua.compress_prompt(
+                system_prompt,
+                target_token=150,  # Adjust this value as needed
+                force_tokens=["JSON", "English", "speaker", "telemarketer", "customer"],
+                drop_consecutive=True,
+            )
+
+        compressed_transcript = llm_lingua.compress_prompt(
+            dialog,
+            rate=0.5,  # Adjust compression rate as needed
+            force_tokens=["!", ".", "?", "\n"],
             drop_consecutive=True,
         )
 
-    compressed_transcript = llm_lingua.compress_prompt(
-        dialog,
-        rate=0.5,  # Adjust compression rate as needed
-        force_tokens=["!", ".", "?", "\n"],
-        drop_consecutive=True,
-    )
 
-
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-        {"role": "system", "content": compressed_system["compressed_prompt"]},
-        {"role": "user", "content": f"The audio transcript is: {compressed_transcript['compressed_prompt']}"}
-        ],
-        temperature=0
-    )
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+            {"role": "system", "content": compressed_system["compressed_prompt"]},
+            {"role": "user", "content": f"The audio transcript is: {compressed_transcript['compressed_prompt']}"}
+            ],
+            temperature=0
+        )
+    else:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"The audio transcript is: {dialog}"}
+            ],
+            temperature=0
+        )
+        
 
     
     
@@ -1370,13 +1382,15 @@ def LLM_audit(dialog, audio_file):
             %s
         """ % (dialog)
 
-        # Compress the dialog input
-        compressed_dialog = llm_lingua.compress_prompt(
-            dialog,
-            rate=0.5,  # Adjust compression rate as needed
-            force_tokens=["!", ".", "?", "\n"],
-            drop_consecutive=True,
-        )
+        if st.session_state.use_compression:
+            compressed_dialog = llm_lingua.compress_prompt(
+                dialog,
+                rate=0.5,  # Adjust compression rate as needed
+                force_tokens=["!", ".", "?", "\n"],
+                drop_consecutive=True,
+            )
+        else:
+            compressed_dialog = dialog
 
         model_engine ="gpt-4o-mini"
 
@@ -1401,7 +1415,7 @@ def LLM_audit(dialog, audio_file):
         output_dict = {"Stage 1": stage_1_result}
 
         if determine_pass_fail(stage_1_result) == "Pass":
-                        
+
             messages=[{'role':'user', 'content':f"{stage_2_prompt} {compressed_dialog}"}]
 
             model_engine ="gpt-4o-mini"
@@ -2149,6 +2163,8 @@ def main():
         if "logged_in" not in st.session_state:
             st.session_state["logged_in"] = False
             st.session_state["username"] = None
+        if "use_compression" not in st.session_state:
+            st.session_state.use_compression = True
 
         if not st.session_state["username"]:
             # Show the login page if not logged in
@@ -2190,6 +2206,11 @@ def main():
                         "Choose your Audit AI model:",
                         ("OpenAI (Recommended)", "Groq")
                     )
+
+                    st.title("Advanced Settings")
+                    use_compression = st.checkbox("Enable Text Compression", value=True, 
+                                                help="When enabled, compresses text to reduce token usage. Disable for full text processing.")
+                    
                     st.write(f"Transcription Model:\n\n{transcribe_option.replace('(Recommended)','')}\n\nAudit Model:\n\n{audit_option.replace('(Recommended)','')}")
                     st.markdown('<p style="color:red;">Groq AI Models are not recommended for file sizes of more than 1MB. Model will start to hallucinate.</p>', unsafe_allow_html=True)
 
