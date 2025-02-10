@@ -674,7 +674,8 @@ def reset_password_2fa(username_or_email, new_password, reset_token):
         session.close()
 
 def password_reset_interface():
-    """Streamlit interface for password reset"""
+    #!CANNOT USE SCHOOL WIFI TO SEND EMAIL!!!!!
+    #!REMEMBER TO CHANGE THE EMAIL AND APP PASSWORD TO YOUR OWN ONE IN THE SECRETS.TOML FILE THANKS
     st.title("Password Reset")
     
     # Step 1: Request reset
