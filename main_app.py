@@ -1053,6 +1053,7 @@ def speech_to_text(audio_file):
 
 
     if st.session_state.use_compression:
+        print("Using compression")
         compressed_system = llm_lingua.compress_prompt(
                 system_prompt,
                 target_token=150,  # Adjust this value as needed
@@ -1077,6 +1078,7 @@ def speech_to_text(audio_file):
             temperature=0
         )
     else:
+        print("Not using compression")
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -1394,7 +1396,7 @@ def LLM_audit(dialog, audio_file):
 
         model_engine ="gpt-4o-mini"
 
-        messages=[{'role':'user', 'content':f"{stage_1_prompt} {compressed_dialog['compressed_prompt']}"}]
+        messages=[{'role':'user', 'content':f"{stage_1_prompt} {compressed_dialog}"}]
 
         completion = client.chat.completions.create(
             model=model_engine,
@@ -2209,7 +2211,7 @@ def main():
                     )
 
                     st.title("Advanced Settings")
-                    use_compression = st.checkbox("Enable Text Compression", value=True, 
+                    st.session_state.use_compression = st.checkbox("Enable Text Compression", value=True, 
                                                 help="When enabled, compresses text to reduce token usage. Disable for full text processing.")
                     
                     st.write(f"Transcription Model:\n\n{transcribe_option.replace('(Recommended)','')}\n\nAudit Model:\n\n{audit_option.replace('(Recommended)','')}")
